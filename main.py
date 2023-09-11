@@ -12,6 +12,7 @@ import time
 import argparse
 import datetime
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -93,6 +94,10 @@ def train(
 
     best_params = None
     best_reward = np.inf
+
+    losses_list = []  # epoch 단위로 mean loss를 저장하는 리스트
+    rewards_list = []  # epoch 단위로 mean reward를 저장하는 리스트
+    valid_list = []  # epoch 단위로 mean valid를 저장하는 리스트
 
     for epoch in range(5):
         actor.train()
@@ -184,6 +189,20 @@ def train(
             "(%2.4fs / 100 batches)\n"
             % (mean_loss, mean_reward, mean_valid, time.time() - epoch_start, np.mean(times))
         )
+        losses_list.append(mean_loss)  # epoch에서 계산된 손실값(mean loss)을 리스트에 저장
+        # print(losses_list)
+        rewards_list.append(mean_reward)  # epoch에서 계산된 보상값(mean reward)을 리스트에 저장
+        # print(rewards_list)
+        valid_list.append(mean_valid)  # epoch에서 계산된 검증셋 보상값(mean valid)을 리스트에 저장
+        # print(valid_list)
+    plt.close()
+    plt.plot(losses_list, label="Mean loss")  # mean loss 그래프 그리기
+    plt.plot(rewards_list, label="Mean reward")  # mean reward 그래프 그리기
+    plt.plot(valid_list, label="Mean valid reward")  # mean valid 그래프 그리기
+    plt.legend()  # 그래프에 대한 범례 표시
+    plt.xlabel("Epoch")  # x축 레이블 설정
+    plt.ylabel("Value")  # y축 레이블 설정
+    plt.savefig("graph.png")
 
 
 def train_vrp(args):
