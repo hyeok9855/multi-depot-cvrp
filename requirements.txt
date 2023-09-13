@@ -1,0 +1,5 @@
+numpy=1.25.2
+torch=2.0.1
+matplotlib=3.7.3
+torchrl=0.1.1
+tensordict=0.1.2
