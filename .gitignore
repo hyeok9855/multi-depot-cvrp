@@ -1,4 +1,5 @@
 .git
 .vscode
+.venv
 __pycache__
 results
