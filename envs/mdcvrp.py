@@ -41,6 +41,7 @@ class MDCVRPEnv:
         max_demand: int = 9,
         vehicle_capacity: float | None = None,
         device: str = "cpu",
+        one_by_one: bool = False,
     ):
         self.n_nodes = n_nodes
         self.n_agents = n_agents
@@ -53,6 +54,7 @@ class MDCVRPEnv:
         assert self.vehicle_capacity >= max_demand, "Vehicle capacity must be larger than the maximum demand"
         self.device = device
         self.batch_size: int | None = None
+        self.one_by_one = one_by_one
 
     def reset(self, td: TensorDict | None = None, batch_size: int | None = None) -> TensorDict:
         """Reset the Environment"""
@@ -134,25 +136,35 @@ class MDCVRPEnv:
         action_mask = torch.full_like(action_mask, False)  # (batch_size, n_agents, n_agents + n_nodes)
         #####################################################################
         # QUESTION: When one agent is delivering, can the other agent move? #
-        active_batch_idx, active_agent_idx = torch.where(agent_loc_idx >= self.n_agents)
-        # Only the active agent can move, but it cannot go to the other agent's depot
-        mask_src = torch.full((active_batch_idx.shape[0], 1, self.n_agents + self.n_nodes), True, device=self.device)
-        mask_src[:, :, : self.n_agents] = False
-        mask_src = torch.scatter(
-            input=mask_src,
-            index=active_agent_idx.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, self.n_agents)),
-            dim=2,
-            value=True,
-        )
-        action_mask[active_batch_idx] = torch.scatter(
-            input=action_mask[active_batch_idx],
-            index=active_agent_idx.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, self.n_agents + self.n_nodes)),
-            dim=1,
-            src=mask_src,
-        )
-        # if no agent is currently delivering, unmask all nodes except the depot
-        inactive_batch_idx = torch.where((agent_loc_idx < self.n_agents).all(dim=1))[0]
-        action_mask[inactive_batch_idx, :, self.n_agents :] = True
+        if self.one_by_one:
+            active_batch_idx, active_agent_idx = torch.where(agent_loc_idx >= self.n_agents)
+            # Only the active agent can move, but it cannot go to the other agent's depot
+            mask_src = torch.full(
+                (active_batch_idx.shape[0], 1, self.n_agents + self.n_nodes), True, device=self.device
+            )
+            mask_src[:, :, : self.n_agents] = False
+            mask_src = torch.scatter(
+                input=mask_src,
+                index=active_agent_idx.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, self.n_agents)),
+                dim=2,
+                value=True,
+            )
+            action_mask[active_batch_idx] = torch.scatter(
+                input=action_mask[active_batch_idx],
+                index=active_agent_idx.unsqueeze(-1).unsqueeze(-1).expand((-1, -1, self.n_agents + self.n_nodes)),
+                dim=1,
+                src=mask_src,
+            )
+            # if no agent is currently delivering, unmask all nodes except the depot
+            inactive_batch_idx = torch.where((agent_loc_idx < self.n_agents).all(dim=1))[0]
+            action_mask[inactive_batch_idx, :, self.n_agents :] = True
+        else:
+            action_mask[:, :, : self.n_agents] = (
+                torch.eye(self.n_agents, dtype=torch.bool, device=self.device)
+                .unsqueeze(0)
+                .expand((td_shape[0], -1, -1))
+            )
+            action_mask[:, :, self.n_agents :] = True
         #####################################################################
 
         # mask out the node (or depot) that the agent is currently at

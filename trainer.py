@@ -185,8 +185,16 @@ class MDCVRPTrainer:
             _optimizer.step()
 
     def save_model(self, epoch: int):
-        # TODO
-        pass
+        """Save model parameters and optimizer state"""
+        torch.save(
+            {
+                "actor": self.actor.state_dict(),
+                "critic": self.critic.state_dict(),
+                "actor_optimizer": self.actor_optimizer.state_dict(),
+                "critic_optimizer": self.critic_optimizer.state_dict(),
+            },
+            self.checkpoint_dir / f"epoch{epoch}.pth",
+        )
 
 
 if __name__ == "__main__":
@@ -196,21 +204,22 @@ if __name__ == "__main__":
 
     env_params = {
         "n_nodes": 20,
-        "n_agents": 2,
+        "n_agents": 4,
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
         "max_demand": 9,
         "vehicle_capacity": None,
+        "one_by_one": True,
     }
 
     model_params = {
         "loc_encoder": {"input_size": 3, "hidden_size": 128},  # shared
         "agent_encoder": {"input_size": 3, "hidden_size": 128},  # for actor
-        "ptrnet": {"hidden_size": 128, "num_layers": 1, "dropout": 0.1},  # for actor
+        "ptrnet": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05},  # for actor
         "critic_model": {"hidden_size": 128},  # for critic
-        "actor_optimizer": {"lr": 1e-3},  # TODO: lr scheduler
-        "critic_optimizer": {"lr": 1e-3},
+        "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
+        "critic_optimizer": {"lr": 5e-4},
     }
 
     exp_name = "debug"
