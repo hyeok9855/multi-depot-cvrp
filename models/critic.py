@@ -1,44 +1,15 @@
+from typing import cast
+
+from tensordict import TensorDict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.base_models import Encoder
+
+from models.base import Encoder
+from envs import MDCVRPEnv
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-class StateCritic(nn.Module):
-    """Estimates the problem complexity.
-
-    This is a basic module that just looks at the log-probabilities predicted by
-    the encoder + decoder, and returns an estimate of complexity
-    """
-
-    def __init__(self, static_size, dynamic_size, hidden_size):
-        super(StateCritic, self).__init__()
-
-        self.static_encoder = Encoder(static_size, hidden_size)
-        self.dynamic_encoder = Encoder(dynamic_size, hidden_size)
-
-        # Define the encoder & decoder models
-        self.fc1 = nn.Conv1d(hidden_size * 2, 20, kernel_size=1)
-        self.fc2 = nn.Conv1d(20, 20, kernel_size=1)
-        self.fc3 = nn.Conv1d(20, 1, kernel_size=1)
-
-        for p in self.parameters():
-            if len(p.shape) > 1:
-                nn.init.xavier_uniform_(p)
-
-    def forward(self, static, dynamic):
-        # Use the probabilities of visiting each
-        static_hidden = self.static_encoder(static)
-        dynamic_hidden = self.dynamic_encoder(dynamic)
-
-        hidden = torch.cat((static_hidden, dynamic_hidden), 1)
-
-        output = F.relu(self.fc1(hidden))
-        output = F.relu(self.fc2(output))
-        output = self.fc3(output).sum(dim=2)
-        return output
 
 
 class Critic(nn.Module):
@@ -48,20 +19,33 @@ class Critic(nn.Module):
     the encoder + decoder, and returns an estimate of complexity
     """
 
-    def __init__(self, hidden_size):
-        super(Critic, self).__init__()
+    def __init__(self, env: MDCVRPEnv, loc_encoder: Encoder, hidden_size: int):
+        super().__init__()
 
-        # Define the encoder & decoder models
-        self.fc1 = nn.Conv1d(1, hidden_size, kernel_size=1)
-        self.fc2 = nn.Conv1d(hidden_size, 20, kernel_size=1)
-        self.fc3 = nn.Conv1d(20, 1, kernel_size=1)
+        self.env = env
+        self.loc_encoder = loc_encoder
+
+        self.conv1 = nn.Conv1d(hidden_size, 20, kernel_size=1)
+        self.conv2 = nn.Conv1d(20, 20, kernel_size=1)
+        self.conv3 = nn.Conv1d(20, 1, kernel_size=1)
 
         for p in self.parameters():
             if len(p.shape) > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, input):
-        output = F.relu(self.fc1(input.unsqueeze(1)))
-        output = F.relu(self.fc2(output)).squeeze(2)
-        output = self.fc3(output).sum(dim=2)
-        return output
+    def forward(self, obs_td: TensorDict):
+        # Use the same input as the actor's loc_encoder
+        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_nodes, 2)
+        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_nodes)
+        # Augment demand with dummy demand for agents
+        aug_demand = torch.cat(
+            [-torch.ones(demand.shape[0], self.env.n_agents, device=obs_td.device), demand], dim=1
+        )  # (batch_size, n_nodes + n_agents)
+        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_nodes, 3)
+        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_nodes)
+
+        output = F.relu(self.loc_encoder(loc_x))  # (batch_size, hidden_size, n_agents + n_nodes)
+        output = F.relu(self.conv1(output))
+        output = F.relu(self.conv2(output))
+        output = self.conv3(output).sum(dim=2)
+        return output  # (batch_size, 1)

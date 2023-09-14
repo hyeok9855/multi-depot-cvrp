@@ -1,190 +1,148 @@
+from typing import cast
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.base_models import Encoder, Pointer
+from tensordict import TensorDict
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from envs import MDCVRPEnv
+from models.base import Encoder
+from models.pointer import PtrNet
 
 
-class DRL4TSP(nn.Module):
-    """Defines the main Encoder, Decoder, and Pointer combinatorial models.
+class Actor(nn.Module):
+    """
+    Actor for MDCVRP
 
-    Parameters
-    ----------
-    static_size: int
-        Defines how many features are in the static elements of the model
-        (e.g. 2 for (x, y) coordinates)
-    dynamic_size: int > 1
-        Defines how many features are in the dynamic elements of the model
-        (e.g. 2 for the VRP which has (load, demand) attributes. The TSP doesn't
-        have dynamic elements, but to ensure compatility with other optimization
-        problems, assume we just pass in a vector of zeros.
-    hidden_size: int
-        Defines the number of units in the hidden layer for all static, dynamic,
-        and decoder output units.
-    update_fn: function or None
-        If provided, this method is used to calculate how the input dynamic
-        elements are updated, and is called after each 'point' to the input element.
-    mask_fn: function or None
-        Allows us to specify which elements of the input sequence are allowed to
-        be selected. This is useful for speeding up training of the networks,
-        by providing a sort of 'rules' guidlines to the algorithm. If no mask
-        is provided, we terminate the search after a fixed number of iterations
-        to avoid tours that stretch forever
-    num_layers: int
-        Specifies the number of hidden layers to use in the decoder RNN
-    dropout: float
-        Defines the dropout rate for the decoder
+    Args:
+        env: MDCVRP environment
+        loc_encoder: Location encoder
+        agent_encoder: Agent encoder
+        ptrnet: Pointer network for decoding
     """
 
     def __init__(
-        self, static_size, dynamic_size, hidden_size, update_fn=None, mask_fn=None, num_layers=1, dropout=0.0
+        self,
+        env: MDCVRPEnv,
+        loc_encoder: Encoder,
+        agent_encoder: Encoder,
+        rnn_input_encoder: Encoder,
+        ptrnet: PtrNet,
+        phase: str,
+        logger: logging.Logger,
     ):
-        super(DRL4TSP, self).__init__()
+        super().__init__()
+        self.env = env
+        self.loc_encoder = loc_encoder
+        self.agent_encoder = agent_encoder
+        self.rnn_input_encoder = rnn_input_encoder
+        self.ptrnet = ptrnet
+        self.phase = phase
+        self.logger = logger
 
-        if dynamic_size < 1:
-            raise ValueError(":param dynamic_size: must be > 0, even if the " "problem has no dynamic elements")
+        self.n_actions = self.env.n_agents + self.env.n_nodes
 
-        self.update_fn = update_fn
-        self.mask_fn = mask_fn
-
-        # Define the encoder & decoder models
-        self.static_encoder = Encoder(static_size, hidden_size)
-        self.dynamic_encoder = Encoder(dynamic_size, hidden_size)
-        self.decoder = Encoder(static_size, hidden_size)
-        self.pointer = Pointer(hidden_size, num_layers, dropout)
-
-        for p in self.parameters():
-            if len(p.shape) > 1:
-                nn.init.xavier_uniform_(p)
-
-        # Used as a proxy initial state in the decoder when not specified
-        self.x0 = torch.zeros((1, static_size, 1), requires_grad=True, device=device)
-
-    def forward(self, static, dynamic, decoder_input=None, last_hh=None):
+    def forward(self, obs_td: TensorDict) -> tuple[TensorDict, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Parameters
-        ----------
-        static: Array of size (batch_size, feats, num_cities)
-            Defines the elements to consider as static. For the TSP, this could be
-            things like the (x, y) coordinates, which won't change
-        dynamic: Array of size (batch_size, feats, num_cities)
-            Defines the elements to consider as static. For the VRP, this can be
-            things like the (load, demand) of each city. If there are no dynamic
-            elements, this can be set to None
-        decoder_input: Array of size (batch_size, num_feats)
-            Defines the outputs for the decoder. Currently, we just use the
-            static elements (e.g. (x, y) coordinates), but this can technically
-            be other things as well
-        last_hh: Array of size (batch_size, num_hidden)
-            Defines the last hidden state for the RNN
+        Forward pass of the actor
         """
+        batch_size = obs_td["loc"].shape[0]
 
-        batch_size, input_size, sequence_size = static.size()
+        n_step = 0
+        rnn_input_x = torch.zeros((batch_size, self.rnn_input_encoder.input_size, 1), device=obs_td.device)
+        rnn_last_hidden = None
+        actions = log_probs = rewards = torch.empty((batch_size, 0), device=obs_td.device)
+        while "done" not in obs_td.keys() or not torch.all(cast(torch.BoolTensor, obs_td["done"])):
+            a_flat, log_p_flat, rnn_last_hidden = self.get_action(obs_td, rnn_input_x, rnn_last_hidden)
+            actions = torch.cat([actions, a_flat.unsqueeze(1)], dim=1)
+            log_probs = torch.cat([log_probs, log_p_flat.unsqueeze(1)], dim=1)
 
-        if decoder_input is None:
-            decoder_input = self.x0.expand(batch_size, -1, -1)
+            # unflatten action and take a step in the environment
+            action = torch.stack([a_flat // self.n_actions, a_flat % self.n_actions], dim=1)  # (batch_size, 2)
+            obs_td.update({"action": action})
+            obs_td = self.env.step(obs_td)
 
-        # Always use a mask - if no function is provided, we don't update it
-        mask = torch.ones(batch_size, sequence_size, device=device)
+            rnn_input_loc = torch.gather(
+                input=obs_td["agent_loc"], index=action[:, 0].unsqueeze(-1).unsqueeze(-1).expand((-1, -1, 2)), dim=1
+            )  # (batch_size, 1, 2)
+            rnn_input_cap = torch.gather(
+                input=obs_td["remaining_capacity"], index=action[:, 0].unsqueeze(-1), dim=1
+            )  # (batch_size, 1)
+            rnn_input_x = torch.cat([rnn_input_loc, rnn_input_cap.unsqueeze(-1)], dim=-1)  # (batch_size, 1, 3)
+            rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 3, 1)
 
-        # Structures for holding the output sequences
-        tour_idx, tour_logp = [], []
-        max_steps = sequence_size if self.mask_fn is None else 1000
+            assert obs_td.get("reward") is not None
+            reward = cast(torch.FloatTensor, obs_td["reward"])  # (batch_size, 1)
+            rewards = torch.cat([rewards, reward], dim=1)  # TODO: we may save intermediate rewards
 
-        # Static elements only need to be processed once, and can be used across
-        # all 'pointing' iterations. When / if the dynamic elements change,
-        # their representations will need to get calculated again.
-        static_hidden = self.static_encoder(static)
-        dynamic_hidden = self.dynamic_encoder(dynamic)
-
-        for _ in range(max_steps):
-            if not mask.byte().any():
+            if n_step > self.env.n_nodes * 2:
+                self.logger.warning("Too many steps! Please check the environment.")
                 break
 
-            # ... but compute a hidden rep for each element added to sequence
-            decoder_hidden = self.decoder(decoder_input)
+        return obs_td, actions, log_probs, rewards
 
-            probs, last_hh = self.pointer(static_hidden, dynamic_hidden, decoder_hidden, last_hh)
-            probs = F.softmax(probs + mask.log(), dim=1)
+    def get_action(
+        self, obs_td: TensorDict, rnn_input_x: torch.Tensor, rnn_last_hidden: torch.FloatTensor | None
+    ) -> tuple[torch.Tensor, torch.FloatTensor, torch.FloatTensor]:
+        """
+        Get action by decoding with the pointer network.
+        Unlike the original paper, we assume that all the input changes each step.
 
-            # When training, sample the next step according to its probability.
-            # During testing, we can take the greedy approach and choose highest
-            if self.training:
-                m = torch.distributions.Categorical(probs)
+        Args:
+            obs_td: Observation TensorDict
+            rnn_input_x: input to the pointer network
+            rnn_last_hidden: hidden state of the pointer network
 
-                # Sometimes an issue with Categorical & sampling on GPU; See:
-                # https://github.com/pemami4911/neural-combinatorial-rl-pytorch/issues/5
-                ptr = m.sample()
-                while not torch.gather(mask, 1, ptr.data.unsqueeze(1)).byte().all():
-                    ptr = m.sample()
-                logp = m.log_prob(ptr)
-            else:
-                prob, ptr = torch.max(probs, 1)  # Greedy
-                logp = prob.log()
+        Returns:
+            Tuple of action, log probability of the action, and hidden state of the pointer network
+        """
 
-            # After visiting a node update the dynamic representation
-            if self.update_fn is not None:
-                dynamic = self.update_fn(dynamic, ptr.data)
-                dynamic_hidden = self.dynamic_encoder(dynamic)
+        ### Location Encoding
+        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_nodes, 2)
+        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_nodes)
+        # Augment demand with dummy demand for agents
+        aug_demand = torch.cat(
+            [-torch.ones((demand.shape[0], self.env.n_agents), device=obs_td.device), demand], dim=1
+        )  # (batch_size, n_nodes + n_agents)
+        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_nodes, 3)
+        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_nodes)
+        loc_z = self.loc_encoder(loc_x)  # (batch_size, hidden_size, n_agents + n_nodes)
 
-                # Since we compute the VRP in minibatches, some tours may have
-                # number of stops. We force the vehicles to remain at the depot
-                # in these cases, and logp := 0
-                is_done = dynamic[:, 1].sum(1).eq(0).float()
-                logp = logp * (1.0 - is_done)
+        ### Agent Encoding
+        agent_loc = cast(torch.FloatTensor, obs_td["agent_loc"])  # (batch_size, n_agents, 2)
+        remaining_capacity = cast(torch.FloatTensor, obs_td["remaining_capacity"])  # (batch_size, n_agents)
+        # TODO: add depot location to agent_x
+        agent_x = torch.cat([agent_loc, remaining_capacity.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents, 3)
+        agent_x = agent_x.transpose(1, 2)  # (batch_size, 3, n_agents)
+        agent_z = self.agent_encoder(agent_x)  # (batch_size, hidden_size, n_agents)
 
-            # And update the mask so we don't re-visit if we don't need to
-            if self.mask_fn is not None:
-                mask = self.mask_fn(mask, dynamic, ptr.data).detach()
+        ### Pointer Network
+        rnn_input_z = self.rnn_input_encoder(rnn_input_x).transpose(1, 2)  # (batch_size, 1, hidden_size)
 
-            tour_logp.append(logp.unsqueeze(1))
-            tour_idx.append(ptr.data.unsqueeze(1))
+        loc_z_expand = loc_z.unsqueeze(-2).expand(-1, -1, self.env.n_agents, -1)
+        agent_z_expand = agent_z.unsqueeze(-1).expand(-1, -1, -1, self.env.n_nodes + self.env.n_agents)
+        att_key_z = torch.cat([loc_z_expand, agent_z_expand], dim=1).flatten(start_dim=2)
+        # att_key_z: (batch_size, 2 * hidden_size, n_agents * (n_agents + n_nodes))
 
-            decoder_input = torch.gather(static, 2, ptr.view(-1, 1, 1).expand(-1, input_size, 1)).detach()
+        action_logit, rnn_hidden = self.ptrnet(rnn_input_z, rnn_last_hidden, att_key_z)
+        # action_logit: (batch_size, n_agents * (n_agents + n_nodes))
+        # rnn_hidden: (batch_size, hidden_size)
 
-        tour_idx = torch.cat(tour_idx, dim=1)  # (batch_size, seq_len)
-        tour_logp = torch.cat(tour_logp, dim=1)  # (batch_size, seq_len)
+        # Sample actions with action mask
+        action_mask = cast(torch.BoolTensor, obs_td["action_mask"])  # (batch_size, n_agents, n_agents + n_nodes)
+        action_mask = action_mask.flatten(start_dim=1)  # (batch_size, n_agents * (n_agents + n_nodes))
+        action_logit_masked = action_logit + action_mask.log()  # (batch_size, n_agents * (n_agents + n_nodes))
+        action_probs = F.softmax(action_logit_masked, dim=-1)  # (batch_size, n_agents * (n_agents + n_nodes))
 
-        return tour_idx, tour_logp
+        if self.phase == "train":
+            action_dist = torch.distributions.Categorical(action_probs)
+            a_flat = action_dist.sample()  # (batch_size,)
+            log_p_flat = action_dist.log_prob(a_flat)  # (batch_size,)
+        else:  # self.phase == "eval"
+            p_flat, a_flat = torch.max(action_probs, dim=-1)  # (batch_size,)
+            log_p_flat = p_flat.log()  # (batch_size,)
 
-
-class Decoder(nn.Module):
-    def __init__(self, feactures_dim, hidden_size, n_layers=1):
-        super(Decoder, self).__init__()
-
-        self.W1 = Var(hidden_size, hidden_size)
-        self.W2 = Var(hidden_size, hidden_size)
-        self.b2 = Var(hidden_size)
-        self.V = Var(hidden_size)
-
-        self.lstm = nn.LSTM(hidden_size, hidden_size, batch_first=True, num_layers=n_layers)
-
-    def forward(self, input, hidden, enc_outputs, mask, prev_idxs):
-        w1e = torch.matmul(enc_outputs, self.W1)
-        w2h = (torch.matmul(hidden[0][-1], self.W2) + self.b2).unsqueeze(1)
-
-        u = F.tanh(w1e + w2h)
-        a = torch.matmul(u, self.V)
-
-        a, mask = self.apply_mask(a, mask, prev_idxs)
-        a = F.softmax(a)
-        res, hidden = self.lstm(input, hidden)
-        return a, hidden, mask
-
-    def apply_mask(self, attentions, mask, prev_idxs):
-        if mask is None:
-            mask = Variable(torch.ones(attentions.size())).cuda()
-
-        maskk = mask.clone()
-
-        if prev_idxs is not None:
-            for i, j in zip(range(attentions.size(0)), prev_idxs.data):
-                maskk[i, j[0]] = 0
-
-            masked = maskk * attentions + maskk.log()
-        else:
-            masked = attentions
-
-        return masked, maskk
+        # unflatten action
+        return a_flat, log_p_flat, rnn_hidden

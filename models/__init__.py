@@ -1,2 +1,4 @@
-from .actor import DRL4TSP
-from .critic import Critic, StateCritic
+from .actor import Actor
+from .critic import Critic
+from .base import Encoder
+from .pointer import PtrNet
