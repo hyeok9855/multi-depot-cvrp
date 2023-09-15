@@ -139,11 +139,11 @@ class MDCVRPTester:
 if __name__ == "__main__":
     from tester import MDCVRPTester
 
-    exp_name = "debug"
+    file_name = "example"
 
     env_params = {
         ### When test with pre-generated testset ###
-        "testset_path": "data/test/N20_M2/test_0.csv",
+        "testset_path": f"data/test/N20_M2/{file_name}.csv",
         ### When test with randomly generated testset ###
         "n_custs": 20,
         "n_agents": 2,
@@ -167,7 +167,7 @@ if __name__ == "__main__":
         "batch_size": 256,
         ### Logging and Saving ###
         "result_dir": "test_results",
-        "exp_name": exp_name,
+        "exp_name": file_name,
     }
 
     tester = MDCVRPTester(env_params, model_params, tester_params)
