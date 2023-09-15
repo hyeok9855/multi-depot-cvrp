@@ -1,6 +1,7 @@
 .git
 .vscode
 .venv
+data
 __pycache__
-results
-logs
+*results
+*logs

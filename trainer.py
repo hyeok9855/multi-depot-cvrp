@@ -4,6 +4,7 @@ Trainer for MD-CVRP
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import json
 import logging
 import sys
 
@@ -14,7 +15,7 @@ from tqdm import tqdm
 import torch
 
 from envs import MDCVRPEnv
-from models import Actor, Critic, Encoder, PtrNet
+from models import Actor, Critic
 
 
 NOW = datetime.strftime(datetime.now(), "%y%m%d-%H%M%S")
@@ -33,56 +34,60 @@ class MDCVRPTrainer:
         self.env_params.update({"device": self.trainer_params["device"]})
         self.device = torch.device(self.trainer_params["device"])
 
-        ### Paths ###
-        exp_name = f"{env_params['n_nodes']}_{env_params['n_agents']}_{NOW}"
-        self.result_dir = Path(self.trainer_params["result_dir"]) / exp_name / "train"
+        ### Env ###
+        self.env = MDCVRPEnv(**self.env_params)
+
+        ### Model ###
+        self.actor = Actor(env=self.env, **model_params["actor_params"]).to(self.device)
+        self.critic = Critic(env=self.env, **model_params["critic_params"]).to(self.device)
+        self.actor_optimizer = Adam(self.actor.parameters(), **model_params["actor_optimizer"])
+        self.critic_optimizer = Adam(self.critic.parameters(), **model_params["critic_optimizer"])
+
+        ### Paths & Loggers ###
+        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}"
+        exp_name = f"{self.trainer_params['exp_name']}_{NOW}"
+
+        # Paths
+        self.result_dir = Path(self.trainer_params["result_dir"]) / prob_setting / exp_name
+        self.stdout_dir = self.result_dir / "stdout"
         self.checkpoint_dir = self.result_dir / "checkpoints"
         self.figure_dir = self.result_dir / "figures"
         self.tb_log_dir = None
 
-        for _dir in [self.result_dir, self.checkpoint_dir, self.figure_dir]:
-            _dir.mkdir(parents=True, exist_ok=True)
-
-        ### Logger ###
+        # Loggers
         self.logger, self.tb_logger = logging.getLogger(), None
         self.logger.setLevel(logging.INFO)
         self.logger.addHandler(logging.StreamHandler(sys.stdout))
         self.use_tensorboard = self.trainer_params["use_tensorboard"]
         if self.use_tensorboard:
-            self.tb_logger = TbLogger(Path(self.trainer_params["tb_log_dir"]) / exp_name)
+            self.tb_log_dir = Path(self.trainer_params["tb_log_dir"]) / prob_setting / exp_name
+            self.tb_logger = TbLogger(self.tb_log_dir)
         self.step_per_epoch = (
             self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"]
             if self.trainer_params["train_n_samples"] % self.trainer_params["batch_size"] == 0
             else self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"] + 1
         )
 
-        ### Env ###
-        self.env = MDCVRPEnv(**self.env_params)
+        # make dirs
+        for _dir in [self.result_dir, self.stdout_dir, self.checkpoint_dir, self.figure_dir, self.tb_log_dir]:
+            _dir.mkdir(parents=True, exist_ok=True)
 
-        ### Model ###
-        loc_encoder = Encoder(**model_params["loc_encoder"]).to(self.device)  # parameter sharing
-        self.actor = Actor(
-            env=self.env,
-            loc_encoder=loc_encoder,
-            agent_encoder=Encoder(**model_params["agent_encoder"]),
-            rnn_input_encoder=Encoder(**model_params["agent_encoder"]),
-            ptrnet=PtrNet(**model_params["ptrnet"]),
-            phase="train",
-            logger=self.logger,
-        ).to(self.device)
-        self.critic = Critic(
-            env=self.env,
-            loc_encoder=Encoder(**model_params["loc_encoder"]),
-            hidden_size=model_params["critic_model"]["hidden_size"],
-        ).to(self.device)
-        self.actor_optimizer = Adam(self.actor.parameters(), **model_params["actor_optimizer"])
-        self.critic_optimizer = Adam(self.critic.parameters(), **model_params["critic_optimizer"])
+        # save params
+        with open(self.result_dir / "params.json", "w") as f:
+            json.dump(
+                {
+                    "env_params": self.env_params,
+                    "model_params": self.model_params,
+                    "trainer_params": self.trainer_params,
+                },
+                f,
+                indent=4,
+            )
 
     def train(self) -> None:
         self.logger.info("Start training...")
 
         n_epochs = self.trainer_params["n_epochs"]
-
         for epoch in range(n_epochs):
             tr_reward, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
             val_reward, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
@@ -115,11 +120,14 @@ class MDCVRPTrainer:
         self.logger.info("Finish training...")
 
     def train_epoch(self, epoch) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self.actor.phase = "train"
+        self.actor.train()
+        self.critic.train()
+
         train_dataset = self.env.generate_data(self.trainer_params["train_n_samples"])
         train_dataloader = DataLoader(train_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         e_rewards = e_actor_losses = e_critic_losses = torch.empty((0,), device=train_dataset.device)
-        self.actor.phase = "train"
         for batch_idx, batch in enumerate(tqdm(train_dataloader)):
             self.env.reset(batch)  # to take steps with mini-batch
             _, _, log_probs, rewards = self.actor(batch)
@@ -142,12 +150,15 @@ class MDCVRPTrainer:
         return e_rewards.mean(), e_actor_losses.mean(), e_critic_losses.mean()
 
     def validate_epoch(self, epoch) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self.actor.phase = "eval"
+        self.actor.eval()
+        self.critic.eval()
+
         valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
         valid_dataloader = DataLoader(valid_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         e_rewards = e_actor_losses = e_critic_losses = torch.empty((0,), device=valid_dataset.device)
         with torch.no_grad():
-            self.actor.phase = "eval"
             for batch_idx, batch in enumerate(tqdm(valid_dataloader)):
                 self.env.reset(batch)  # to take steps with mini-batch
                 obs_td, actions, log_probs, rewards = self.actor(batch)
@@ -161,7 +172,7 @@ class MDCVRPTrainer:
                 e_critic_losses = torch.cat([e_critic_losses, critic_loss.unsqueeze(0)])
 
                 if epoch % self.trainer_params["save_figure_interval"] == 0 and batch_idx == 0:
-                    self.env.render(batch, actions, save_path=self.figure_dir / f"epoch{epoch}.png")
+                    self.env.render(obs_td, actions, save_path=self.figure_dir / f"epoch{epoch}.png")
 
         return e_rewards.mean(), e_actor_losses.mean(), e_critic_losses.mean()
 
@@ -198,12 +209,12 @@ class MDCVRPTrainer:
 
 
 if __name__ == "__main__":
-    import argparse
-
     from trainer import MDCVRPTrainer
 
+    exp_name = "debug"
+
     env_params = {
-        "n_nodes": 20,
+        "n_custs": 20,
         "n_agents": 2,
         "min_loc": 0,
         "max_loc": 1,
@@ -214,24 +225,29 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "loc_encoder": {"input_size": 3, "hidden_size": 128},  # shared
-        "agent_encoder": {"input_size": 3, "hidden_size": 128},  # for actor
-        "ptrnet": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05},  # for actor
-        "critic_model": {"hidden_size": 128},  # for critic
+        "actor_params": {
+            "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "agent_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "rnn_input_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05},
+        },
+        "critic_params": {
+            "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "hidden_size": 128,
+        },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
         "critic_optimizer": {"lr": 5e-4},
     }
 
-    exp_name = "debug"
-
     trainer_params = {
+        ### CPU or GPU ###
+        "device": "cuda",
         ### Training ###
-        "n_epochs": 100,
+        "n_epochs": 500,
         "train_n_samples": 10000,
         "valid_n_samples": 1000,
         "batch_size": 256,
-        "device": "cuda",
-        "max_grad_norm": 1.0,
+        "max_grad_norm": 2.0,
         ### Logging and Saving ###
         "result_dir": "results",
         "use_tensorboard": True,

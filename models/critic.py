@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Any, cast
 
 from tensordict import TensorDict
 import torch
@@ -19,11 +19,11 @@ class Critic(nn.Module):
     the encoder + decoder, and returns an estimate of complexity
     """
 
-    def __init__(self, env: MDCVRPEnv, loc_encoder: Encoder, hidden_size: int):
+    def __init__(self, env: MDCVRPEnv, loc_encoder_params: dict[str, Any], hidden_size: int):
         super().__init__()
 
         self.env = env
-        self.loc_encoder = loc_encoder
+        self.loc_encoder = Encoder(**loc_encoder_params)
 
         self.conv1 = nn.Conv1d(hidden_size, 20, kernel_size=1)
         self.conv2 = nn.Conv1d(20, 20, kernel_size=1)
@@ -35,16 +35,16 @@ class Critic(nn.Module):
 
     def forward(self, obs_td: TensorDict):
         # Use the same input as the actor's loc_encoder
-        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_nodes, 2)
-        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_nodes)
+        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_custs, 2)
+        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_custs)
         # Augment demand with dummy demand for agents
         aug_demand = torch.cat(
             [-torch.ones(demand.shape[0], self.env.n_agents, device=obs_td.device), demand], dim=1
-        )  # (batch_size, n_nodes + n_agents)
-        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_nodes, 3)
-        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_nodes)
+        )  # (batch_size, n_custs + n_agents)
+        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_custs, 3)
+        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_custs)
 
-        output = F.relu(self.loc_encoder(loc_x))  # (batch_size, hidden_size, n_agents + n_nodes)
+        output = F.relu(self.loc_encoder(loc_x))  # (batch_size, hidden_size, n_agents + n_custs)
         output = F.relu(self.conv1(output))
         output = F.relu(self.conv2(output))
         output = self.conv3(output).sum(dim=2)

@@ -1,5 +1,4 @@
-from typing import cast
-import logging
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
@@ -18,31 +17,29 @@ class Actor(nn.Module):
 
     Args:
         env: MDCVRP environment
-        loc_encoder: Location encoder
-        agent_encoder: Agent encoder
-        ptrnet: Pointer network for decoding
+        loc_encoder_params: Location encoder params
+        agent_encoder_params: Agent encoder params
+        rnn_input_encoder_params: RNN input encoder params
+        ptrnet_params: Pointer network for decoding
     """
 
     def __init__(
         self,
         env: MDCVRPEnv,
-        loc_encoder: Encoder,
-        agent_encoder: Encoder,
-        rnn_input_encoder: Encoder,
-        ptrnet: PtrNet,
-        phase: str,
-        logger: logging.Logger,
+        loc_encoder_params: dict[str, Any],
+        agent_encoder_params: dict[str, Any],
+        rnn_input_encoder_params: dict[str, Any],
+        ptrnet_params: dict[str, Any],
     ):
         super().__init__()
         self.env = env
-        self.loc_encoder = loc_encoder
-        self.agent_encoder = agent_encoder
-        self.rnn_input_encoder = rnn_input_encoder
-        self.ptrnet = ptrnet
-        self.phase = phase
-        self.logger = logger
+        self.loc_encoder = Encoder(**loc_encoder_params)
+        self.agent_encoder = Encoder(**agent_encoder_params)
+        self.rnn_input_encoder = Encoder(**rnn_input_encoder_params)
+        self.ptrnet = PtrNet(**ptrnet_params)
+        self.phase = "train"
 
-        self.n_actions = self.env.n_agents + self.env.n_nodes
+        self.n_actions = self.env.n_agents + self.env.n_custs
 
     def forward(self, obs_td: TensorDict) -> tuple[TensorDict, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -77,9 +74,8 @@ class Actor(nn.Module):
             reward = cast(torch.FloatTensor, obs_td["reward"])  # (batch_size, 1)
             rewards = torch.cat([rewards, reward], dim=1)  # TODO: we may save intermediate rewards
 
-            if n_step > self.env.n_nodes * 2:
-                self.logger.warning("Too many steps! Please check the environment.")
-                break
+            if n_step > self.env.n_custs * 2:
+                raise RuntimeError("Too many steps, maybe stuck in an infinite loop? Check your Env.")
 
         return obs_td, actions, log_probs, rewards
 
@@ -100,15 +96,15 @@ class Actor(nn.Module):
         """
 
         ### Location Encoding
-        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_nodes, 2)
-        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_nodes)
+        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_custs, 2)
+        demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_custs)
         # Augment demand with dummy demand for agents
         aug_demand = torch.cat(
             [-torch.ones((demand.shape[0], self.env.n_agents), device=obs_td.device), demand], dim=1
-        )  # (batch_size, n_nodes + n_agents)
-        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_nodes, 3)
-        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_nodes)
-        loc_z = self.loc_encoder(loc_x)  # (batch_size, hidden_size, n_agents + n_nodes)
+        )  # (batch_size, n_custs + n_agents)
+        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_agents + n_custs, 3)
+        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_agents + n_custs)
+        loc_z = self.loc_encoder(loc_x)  # (batch_size, hidden_size, n_agents + n_custs)
 
         ### Agent Encoding
         agent_loc = cast(torch.FloatTensor, obs_td["agent_loc"])  # (batch_size, n_agents, 2)
@@ -122,19 +118,19 @@ class Actor(nn.Module):
         rnn_input_z = self.rnn_input_encoder(rnn_input_x).transpose(1, 2)  # (batch_size, 1, hidden_size)
 
         loc_z_expand = loc_z.unsqueeze(-2).expand(-1, -1, self.env.n_agents, -1)
-        agent_z_expand = agent_z.unsqueeze(-1).expand(-1, -1, -1, self.env.n_nodes + self.env.n_agents)
+        agent_z_expand = agent_z.unsqueeze(-1).expand(-1, -1, -1, self.env.n_custs + self.env.n_agents)
         att_key_z = torch.cat([loc_z_expand, agent_z_expand], dim=1).flatten(start_dim=2)
-        # att_key_z: (batch_size, 2 * hidden_size, n_agents * (n_agents + n_nodes))
+        # att_key_z: (batch_size, 2 * hidden_size, n_agents * (n_agents + n_custs))
 
         action_logit, rnn_hidden = self.ptrnet(rnn_input_z, rnn_last_hidden, att_key_z)
-        # action_logit: (batch_size, n_agents * (n_agents + n_nodes))
+        # action_logit: (batch_size, n_agents * (n_agents + n_custs))
         # rnn_hidden: (batch_size, hidden_size)
 
         # Sample actions with action mask
-        action_mask = cast(torch.BoolTensor, obs_td["action_mask"])  # (batch_size, n_agents, n_agents + n_nodes)
-        action_mask = action_mask.flatten(start_dim=1)  # (batch_size, n_agents * (n_agents + n_nodes))
-        action_logit_masked = action_logit + action_mask.log()  # (batch_size, n_agents * (n_agents + n_nodes))
-        action_probs = F.softmax(action_logit_masked, dim=-1)  # (batch_size, n_agents * (n_agents + n_nodes))
+        action_mask = cast(torch.BoolTensor, obs_td["action_mask"])  # (batch_size, n_agents, n_agents + n_custs)
+        action_mask = action_mask.flatten(start_dim=1)  # (batch_size, n_agents * (n_agents + n_custs))
+        action_logit_masked = action_logit + action_mask.log()  # (batch_size, n_agents * (n_agents + n_custs))
+        action_probs = F.softmax(action_logit_masked, dim=-1)  # (batch_size, n_agents * (n_agents + n_custs))
 
         if self.phase == "train":
             action_dist = torch.distributions.Categorical(action_probs)
