@@ -216,7 +216,9 @@ class MDCVRPEnv:
 
         # demand for each node
         demand = (
-            torch.randint(1, int(self.max_demand), (batch_size, self.n_nodes), dtype=torch.float32, device=self.device)
+            torch.randint(
+                1, int(self.max_demand) + 1, (batch_size, self.n_nodes), dtype=torch.float32, device=self.device
+            )
             / self.vehicle_capacity
         )  # Normalize the demand by the vehicle capacity
 

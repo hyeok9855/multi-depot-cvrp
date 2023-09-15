@@ -204,7 +204,7 @@ if __name__ == "__main__":
 
     env_params = {
         "n_nodes": 20,
-        "n_agents": 4,
+        "n_agents": 2,
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
