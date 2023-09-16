@@ -100,7 +100,6 @@ class MDCVRPTester:
             for batch_idx, batch in enumerate(test_dataloader):
                 self.env.reset(batch)  # to take steps with mini-batch
                 obs_td, actions, _, rewards = self.actor(batch)
-                reward = rewards[:, -1]  # (batch_size,), Now, we use only the last reward
 
                 # to cpu for logging
                 obs_td, actions = obs_td.cpu(), actions.cpu()

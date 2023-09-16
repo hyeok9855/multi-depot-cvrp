@@ -27,6 +27,9 @@ class MDCVRPEnv:
         max_demand: Maximum value for the demand of the customers
         vehicle_capacity: Capacity of the vehicles
         device: Device to use for torch
+        one_by_one: Whether to allow only one agent to move at a time
+        intermediate_reward: Whether to give intermediate reward
+        imbalance_penalty: Whether to penalize the imbalance of the tour length
     """
 
     name = "mdcvrp"
@@ -43,7 +46,9 @@ class MDCVRPEnv:
         max_demand: int = 9,
         vehicle_capacity: float | None = None,
         device: str = "cpu",
-        one_by_one: bool = True,
+        one_by_one: bool = False,
+        intermediate_reward: bool = False,
+        imbalance_penalty: bool = True,
         **kwargs,
     ):
         self.n_custs = n_custs
@@ -58,6 +63,8 @@ class MDCVRPEnv:
         self.device = device
         self.batch_size: int | None = None
         self.one_by_one = one_by_one
+        self.intermediate_reward = intermediate_reward
+        self.imbalance_penalty = imbalance_penalty
 
     def reset(self, td: TensorDict | None = None, batch_size: int | None = None) -> TensorDict:
         """Reset the Environment"""
@@ -189,9 +196,7 @@ class MDCVRPEnv:
         action_mask[done_idx, 0, 0] = True
 
         # if done, reward is the total length of the tour
-        reward = torch.where(done, -torch.sum(cum_length, dim=1, keepdim=True), torch.zeros_like(done))
-        # # Intermediate reward: changed length of the tour
-        # reward = -torch.sum(dist, dim=1, keepdim=True)  # (batch_size, 1)
+        reward = self.get_reward(cum_length, done)  # (batch_size, 1)
 
         td_step = TensorDict(
             {
@@ -211,6 +216,25 @@ class MDCVRPEnv:
         if td_shape == torch.Size([]):
             td_step = td_step.squeeze(0).to_tensordict()
         return td_step
+
+    def get_reward(self, cum_length: torch.Tensor, done: torch.Tensor) -> torch.Tensor:
+        if self.intermediate_reward:
+            raise NotImplementedError
+
+        # If not done, reward is 0
+        if not torch.all(done):
+            return torch.zeros_like(done)
+
+        # If done, reward is the total length of the tour
+        reward = -torch.sum(cum_length, dim=1, keepdim=True)  # (batch_size, 1)
+
+        # If imbalance penalty is enabled, penalize the imbalance of the tour length
+        if self.imbalance_penalty:
+            # penalty is the difference between the longest and the shortest tour length
+            penalty = torch.max(cum_length, dim=1, keepdim=True)[0] - torch.min(cum_length, dim=1, keepdim=True)[0]
+            reward = reward - penalty
+
+        return reward
 
     def generate_data(self, batch_size: int) -> TensorDict:
         # locations of the customers

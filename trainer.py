@@ -52,15 +52,15 @@ class MDCVRPTrainer:
         self.checkpoint_dir = self.result_dir / "checkpoints"
         self.figure_dir = self.result_dir / "figures"
 
+        for _dir in [self.result_dir, self.checkpoint_dir, self.figure_dir]:
+            _dir.mkdir(parents=True, exist_ok=True)
+
         # Loggers
         self.logger, self.file_logger = logging.getLogger("stdout_logger"), logging.getLogger("file_logger")
         self.logger.setLevel(logging.INFO)
         self.file_logger.setLevel(logging.INFO)
         self.logger.addHandler(logging.StreamHandler(sys.stdout))
         self.file_logger.addHandler(logging.FileHandler(self.result_dir / "stdout.log"))
-
-        for _dir in [self.result_dir, self.checkpoint_dir, self.figure_dir]:
-            _dir.mkdir(parents=True, exist_ok=True)
 
         # tensorboard
         self.tb_logger = None
@@ -93,16 +93,18 @@ class MDCVRPTrainer:
 
         n_epochs = self.trainer_params["n_epochs"]
         for epoch in range(n_epochs):
-            tr_reward, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
-            val_reward, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
+            tr_reward, tr_length, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
+            val_reward, val_length, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
 
             log_msg = (
                 f"Epoch {epoch} TRAIN | "
                 f"Reward: {tr_reward:.3f} | "
+                f"Length: {tr_length:.3f} | "
                 f"Actor Loss: {tr_actor_loss:.3f} | "
                 f"Critic Loss: {tr_critic_loss:.3f}\n"
                 f"Epoch {epoch} VALID | "
                 f"Reward: {val_reward:.3f} | "
+                f"Length: {val_length:.3f} | "
                 f"Actor Loss: {val_actor_loss:.3f} | "
                 f"Critic Loss: {val_critic_loss:.3f}"
             )
@@ -111,10 +113,12 @@ class MDCVRPTrainer:
 
             if self.use_tensorboard and self.tb_logger is not None:
                 self.tb_logger.log_value("TRAIN reward/epoch", tr_reward, step=epoch)
+                self.tb_logger.log_value("TRAIN length/epoch", tr_length, step=epoch)
                 self.tb_logger.log_value("TRAIN loss/epoch", tr_actor_loss, step=epoch)
                 self.tb_logger.log_value("TRAIN critic_loss/epoch", tr_critic_loss, step=epoch)
 
                 self.tb_logger.log_value("VALID reward/epoch", val_reward, step=epoch)
+                self.tb_logger.log_value("VALID length/epoch", val_length, step=epoch)
                 self.tb_logger.log_value("VALID loss/epoch", val_actor_loss, step=epoch)
                 self.tb_logger.log_value("VALID critic_loss/epoch", val_critic_loss, step=epoch)
 
@@ -123,7 +127,7 @@ class MDCVRPTrainer:
 
         self.logger.info("Finish training...")
 
-    def train_epoch(self, epoch) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def train_epoch(self, epoch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         self.actor.phase = "train"
         self.actor.train()
         self.critic.train()
@@ -131,29 +135,32 @@ class MDCVRPTrainer:
         train_dataset = self.env.generate_data(self.trainer_params["train_n_samples"])
         train_dataloader = DataLoader(train_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
-        e_rewards = e_actor_losses = e_critic_losses = torch.empty((0,), device=train_dataset.device)
+        e_rewards = e_lengths = e_actor_losses = e_critic_losses = torch.empty((0,), device=train_dataset.device)
         for batch_idx, batch in enumerate(tqdm(train_dataloader)):
             self.env.reset(batch)  # to take steps with mini-batch
-            _, _, log_probs, rewards = self.actor(batch)
-            rewards = rewards[:, -1]  # (batch_size,), Now, we use only the last reward
-            critic_bl = self.critic(batch)  # (batch_size,)
+            obs_td, _, log_probs, rewards = self.actor(batch)
+            rewards = rewards[:, -1]  # (batch_size,), we use only the last reward. TODO: support intermediate rewards
+            lengths = obs_td["cum_length"].sum(dim=1)  # (batch_size,)
 
+            critic_bl = self.critic(batch)  # (batch_size,)
             actor_loss, critic_loss = self.calculate_loss(log_probs, rewards, critic_bl)
             self.optimize_models(actor_loss, critic_loss)
 
             if self.use_tensorboard and self.tb_logger is not None:
                 step = epoch * self.step_per_epoch + batch_idx
                 self.tb_logger.log_value("TRAIN reward/step", rewards.mean(), step=step)
+                self.tb_logger.log_value("TRAIN length/step", lengths.mean(), step=step)
                 self.tb_logger.log_value("TRAIN actor_loss/step", actor_loss, step=step)
                 self.tb_logger.log_value("TRAIN critic_loss/step", critic_loss, step=step)
 
             e_rewards = torch.cat([e_rewards, rewards.mean().unsqueeze(0)])
+            e_lengths = torch.cat([e_lengths, lengths.mean().unsqueeze(0)])
             e_actor_losses = torch.cat([e_actor_losses, actor_loss.unsqueeze(0)])
             e_critic_losses = torch.cat([e_critic_losses, critic_loss.unsqueeze(0)])
 
-        return e_rewards.mean(), e_actor_losses.mean(), e_critic_losses.mean()
+        return e_rewards.mean(), e_lengths.mean(), e_actor_losses.mean(), e_critic_losses.mean()
 
-    def validate_epoch(self, epoch) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def validate_epoch(self, epoch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         self.actor.phase = "eval"
         self.actor.eval()
         self.critic.eval()
@@ -167,24 +174,26 @@ class MDCVRPTrainer:
 
         valid_dataloader = DataLoader(valid_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
-        e_rewards = e_actor_losses = e_critic_losses = torch.empty((0,), device=valid_dataset.device)
+        e_rewards = e_lengths = e_actor_losses = e_critic_losses = torch.empty((0,), device=valid_dataset.device)
         with torch.no_grad():
             for batch_idx, batch in enumerate(tqdm(valid_dataloader)):
                 self.env.reset(batch)  # to take steps with mini-batch
                 obs_td, actions, log_probs, rewards = self.actor(batch)
                 reward = rewards[:, -1]  # (batch_size,), Now, we use only the last reward
+                lengths = obs_td["cum_length"].sum(dim=1)  # (batch_size,)
                 critic_bl = self.critic(batch)  # (batch_size,)
 
                 actor_loss, critic_loss = self.calculate_loss(log_probs, reward, critic_bl)
 
                 e_rewards = torch.cat([e_rewards, reward.mean().unsqueeze(0)])
+                e_lengths = torch.cat([e_lengths, lengths.mean().unsqueeze(0)])
                 e_actor_losses = torch.cat([e_actor_losses, actor_loss.unsqueeze(0)])
                 e_critic_losses = torch.cat([e_critic_losses, critic_loss.unsqueeze(0)])
 
                 if epoch % self.trainer_params["save_figure_interval"] == 0 and batch_idx == 0:
                     self.env.render(obs_td, actions, save_path=self.figure_dir / f"epoch{epoch}.png")
 
-        return e_rewards.mean(), e_actor_losses.mean(), e_critic_losses.mean()
+        return e_rewards.mean(), e_lengths.mean(), e_actor_losses.mean(), e_critic_losses.mean()
 
     @staticmethod
     def calculate_loss(
@@ -232,14 +241,15 @@ if __name__ == "__main__":
         "max_demand": 1,
         "vehicle_capacity": 100,
         "one_by_one": False,
+        "intermediate_reward": False,
+        "imbalance_penalty": True,
     }
 
     model_params = {
         "actor_params": {
             "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
-            "agent_encoder_params": {"input_size": 3, "hidden_size": 128},
             "rnn_input_encoder_params": {"input_size": 5, "hidden_size": 128},
-            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05},
+            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
             "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
