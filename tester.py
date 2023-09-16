@@ -47,7 +47,7 @@ class MDCVRPTester:
 
         ### Paths & Loggers ###
         prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}_D{self.env_params['dimension']}"
-        exp_name = f"{self.tester_params['exp_name']}_{NOW}"
+        exp_name = f"{NOW}_{self.tester_params['exp_name']}"
 
         # Paths
         self.result_dir = Path(self.tester_params["result_dir"]) / prob_setting / exp_name
@@ -84,7 +84,7 @@ class MDCVRPTester:
             env, td, env_params = MDCVRPEnv.from_csv(**self.env_params)
         else:
             env = MDCVRPEnv(**self.env_params)
-            td = env.generate_data(self.env_params["test_n_samples"])
+            td = env.generate_data(self.env_params["test_n_samples"], seed=0)
             env_params = self.env_params
         return env, td, env_params
 

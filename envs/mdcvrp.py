@@ -6,6 +6,7 @@ from typing import Any, cast
 import warnings
 
 from tensordict.tensordict import TensorDict
+import numpy as np
 import pandas as pd
 import torch
 
@@ -277,15 +278,17 @@ class MDCVRPEnv:
 
         return reward
 
-    def generate_data(self, batch_size: int) -> TensorDict:
-        # locations of the customers
-        loc = torch.rand((batch_size, self.n_agents + self.n_custs, self.dimension), dtype=torch.float32)
+    def generate_data(self, batch_size: int, seed: int | None = None) -> TensorDict:
+        # Use numpy to generate the data as it is easier to set the random seed
+        np.random.seed(seed)
 
-        # demand for each customer
-        demand = (
-            torch.randint(1, int(self.max_demand) + 1, (batch_size, self.n_custs), dtype=torch.float32)
-            / self.vehicle_capacity
-        )  # Normalize the demand by the vehicle capacity
+        # locations of the customers
+        loc = np.random.uniform(self.min_loc, self.max_loc, (batch_size, self.n_agents + self.n_custs, self.dimension))
+        loc = torch.from_numpy(loc).float().to(self.device)
+
+        # demand for each customer, Note that the demand is normalized by the vehicle capacity
+        demand = np.random.randint(self.min_demand, self.max_demand + 1, (batch_size, self.n_custs))
+        demand = torch.from_numpy(demand).float().to(self.device) / self.vehicle_capacity
 
         # locations of the depots
         agent_loc = loc[:, : self.n_agents, :].clone()

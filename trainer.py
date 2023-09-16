@@ -50,7 +50,7 @@ class MDCVRPTrainer:
 
         ### Paths & Loggers ###
         prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}_D{self.env_params['dimension']}"
-        exp_name = f"{self.trainer_params['exp_name']}_{NOW}"
+        exp_name = f"{NOW}_{self.trainer_params['exp_name']}"
 
         # Paths
         self.result_dir = Path(self.trainer_params["result_dir"]) / prob_setting / exp_name
@@ -136,7 +136,7 @@ class MDCVRPTrainer:
         self.actor.train()
         self.critic.train()
 
-        train_dataset = self.env.generate_data(self.trainer_params["train_n_samples"])
+        train_dataset = self.env.generate_data(self.trainer_params["train_n_samples"], seed=None)
         train_dataloader = DataLoader(train_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         e_rewards = e_lengths = e_actor_losses = e_critic_losses = torch.empty((0,), device=train_dataset.device)
@@ -172,7 +172,7 @@ class MDCVRPTrainer:
 
         if self.trainer_params["fix_valid_dataset"]:
             if epoch == 1:
-                self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
+                self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"], seed=0)
             valid_dataset = self.valid_dataset
         else:
             valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
@@ -256,7 +256,7 @@ if __name__ == "__main__":
         "actor_params": {
             "loc_encoder_params": {"hidden_size": 64},
             "rnn_input_encoder_params": {"hidden_size": 64},
-            "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": False},
+            "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": True},
         },
         "critic_params": {
             "loc_encoder_params": {"hidden_size": 64},
@@ -272,7 +272,7 @@ if __name__ == "__main__":
         "n_epochs": 500,
         "train_n_samples": 10000,
         "valid_n_samples": 1000,
-        "fix_valid_dataset": True,
+        "fix_valid_dataset": True,  # use the same validation dataset for all epochs, with seed 0
         "batch_size": 256,
         "max_grad_norm": 2.0,
         ### Logging and Saving ###
@@ -281,7 +281,7 @@ if __name__ == "__main__":
         "use_tensorboard": True,  # tensorboard --logdir logs
         "save_figure_interval": 10,  # -1 for not saving
         "save_model_interval": 50,  # -1 for not saving
-        "exp_name": "train",
+        "exp_name": "glipse",
     }
 
     trainer = MDCVRPTrainer(env_params, model_params, trainer_params)
