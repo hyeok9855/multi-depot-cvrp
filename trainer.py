@@ -244,9 +244,9 @@ if __name__ == "__main__":
         "max_demand": 1,
         "vehicle_capacity": 1000,
         "one_by_one": False,
-        "intermediate_reward": False,  # TODO: support intermediate reward
-        "imbalance_penalty": True,
         "no_restart": True,
+        "imbalance_penalty": True,
+        "intermediate_reward": False,  # TODO: support intermediate reward
     }
 
     model_params = {

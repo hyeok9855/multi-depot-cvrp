@@ -30,9 +30,9 @@ class MDCVRPEnv:
         vehicle_capacity: Capacity of the vehicles
         device: Device to use for torch
         one_by_one: Whether to allow only one agent to move at a time
-        intermediate_reward: Whether to give intermediate reward
-        imbalance_penalty: Whether to penalize the imbalance of the tour length
         no_restart: Whether to disable the restart of the agent
+        imbalance_penalty: Whether to penalize the imbalance of the tour length
+        intermediate_reward: Whether to give intermediate reward
     """
 
     name = "mdcvrp"
@@ -51,9 +51,9 @@ class MDCVRPEnv:
         vehicle_capacity: float | None = None,
         device: str = "cpu",
         one_by_one: bool = False,
-        intermediate_reward: bool = False,
-        imbalance_penalty: bool = True,
         no_restart: bool = False,
+        imbalance_penalty: bool = True,
+        intermediate_reward: bool = False,
         **kwargs,
     ):
         self.n_custs = n_custs
