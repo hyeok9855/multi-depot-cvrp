@@ -64,11 +64,17 @@ class Actor(nn.Module):
             rnn_input_loc = torch.gather(
                 input=obs_td["agent_loc"], index=action[:, 0].unsqueeze(-1).unsqueeze(-1).expand((-1, -1, 2)), dim=1
             )  # (batch_size, 1, 2)
+            rnn_input_depot = torch.gather(
+                input=obs_td["loc"], index=action[:, 0].unsqueeze(-1).unsqueeze(-1).expand((-1, -1, 2)), dim=1
+            )  # (batch_size, 1, 2)
             rnn_input_cap = torch.gather(
                 input=obs_td["remaining_capacity"], index=action[:, 0].unsqueeze(-1), dim=1
             )  # (batch_size, 1)
-            rnn_input_x = torch.cat([rnn_input_loc, rnn_input_cap.unsqueeze(-1)], dim=-1)  # (batch_size, 1, 3)
-            rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 3, 1)
+            rnn_input_x = torch.cat(
+                [rnn_input_loc, rnn_input_depot, rnn_input_cap.unsqueeze(-1)], dim=-1
+            )  # (batch_size, 1, 3)
+            # if action is to depot, then set the input as 0
+            rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 5, 1)
 
             assert obs_td.get("reward") is not None
             reward = cast(torch.FloatTensor, obs_td["reward"])  # (batch_size, 1)

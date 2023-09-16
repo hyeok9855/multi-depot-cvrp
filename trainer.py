@@ -154,7 +154,13 @@ class MDCVRPTrainer:
         self.actor.eval()
         self.critic.eval()
 
-        valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
+        if self.trainer_params["fix_valid_dataset"]:
+            if epoch == 0:
+                self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
+            valid_dataset = self.valid_dataset
+        else:
+            valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
+
         valid_dataloader = DataLoader(valid_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         e_rewards = e_actor_losses = e_critic_losses = torch.empty((0,), device=valid_dataset.device)
@@ -219,16 +225,16 @@ if __name__ == "__main__":
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
-        "max_demand": 9,
-        "vehicle_capacity": None,
-        "one_by_one": True,
+        "max_demand": 1,
+        "vehicle_capacity": 100,
+        "one_by_one": False,
     }
 
     model_params = {
         "actor_params": {
             "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
             "agent_encoder_params": {"input_size": 3, "hidden_size": 128},
-            "rnn_input_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "rnn_input_encoder_params": {"input_size": 5, "hidden_size": 128},
             "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05},
         },
         "critic_params": {
@@ -248,6 +254,8 @@ if __name__ == "__main__":
         "valid_n_samples": 1000,
         "batch_size": 256,
         "max_grad_norm": 2.0,
+        ### Validation ###
+        "fix_valid_dataset": True,
         ### Logging and Saving ###
         "result_dir": "results",
         "use_tensorboard": True,

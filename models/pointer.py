@@ -34,17 +34,18 @@ class PtrNet(nn.Module):
         """
         Args:
             rnn_input_z: (batch_size, 1, hidden_size)
-            rnn_last_hidden: (num_layers, hidden_size) or None
+            rnn_last_hidden: (batch_size, num_layers, hidden_size)
             att_key_z: (batch_size, 2 * hidden_size, num_keys)
         """
-        rnn_out, rnn_last_hidden = self.rnn(rnn_input_z, rnn_last_hidden)
+        rnn_out, rnn_hidden = self.rnn(rnn_input_z, rnn_last_hidden)
         # rnn_out: (batch_size, 1, hidden_size)
+        # rnn_hidden: (batch_size, num_layers, hidden_size)
 
         # Always apply dropout on the RNN output
         rnn_out = self.drop_rnn(rnn_out)
         if self.num_layers == 1:
             # If > 1 layer dropout is already applied
-            rnn_last_hidden = self.drop_hh(rnn_last_hidden)
+            rnn_hidden = self.drop_hh(rnn_hidden)
 
         # Given a summary of the current trajectory, obtain an input context
         context_w = self.context_attention(rnn_out, att_key_z)  # (batch_size, 1, num_keys)
@@ -53,4 +54,4 @@ class PtrNet(nn.Module):
         output_prob = self.output_attention(context, att_key_z)  # (batch_size, 1, num_keys)
         output_prob = output_prob.squeeze(1)  # (batch_size, num_keys)
 
-        return output_prob, rnn_last_hidden
+        return output_prob, rnn_hidden
