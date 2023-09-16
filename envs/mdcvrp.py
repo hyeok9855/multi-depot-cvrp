@@ -159,7 +159,49 @@ class MDCVRPEnv:
         )
 
         ### get the new action mask
-        action_mask = torch.full_like(action_mask, False)  # (batch_size, n_agents, n_agents + n_custs)
+        action_mask = self.get_action_mask(demand, agent_loc_idx, remaining_capacity, return_count)
+
+        ### get done and reward
+        # done if no action is available for all agents
+        done = ~action_mask.any(dim=-1).any(dim=-1, keepdim=True)  # (batch_size, 1)
+
+        # if no action is available for any agent, unmask the first agent's depot
+        done_idx = torch.where(done)[0]
+        action_mask[done_idx, 0, 0] = True
+
+        # if done, reward is the total length of the tour
+        reward = self.get_reward(cum_length, demand, done)  # (batch_size, 1)
+
+        td_step = TensorDict(
+            {
+                "loc": loc,
+                "demand": demand,
+                "agent_loc": agent_loc,
+                "agent_loc_idx": agent_loc_idx,
+                "remaining_capacity": remaining_capacity,
+                "cum_length": cum_length,
+                "return_count": return_count,
+                "action_mask": action_mask,
+                "reward": reward,
+                "done": done,
+            },
+            td.shape,
+            device=self.device,
+        )
+        if td_shape == torch.Size([]):
+            td_step = td_step.squeeze(0).to_tensordict()
+        return td_step
+
+    def get_action_mask(
+        self,
+        demand: torch.Tensor,
+        agent_loc_idx: torch.Tensor,
+        remaining_capacity: torch.Tensor,
+        return_count: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size = demand.shape[0]
+
+        action_mask = torch.full((batch_size, self.n_agents, self.n_agents + self.n_custs), False, device=self.device)
         #####################################################################
         # QUESTION: When one agent is delivering, can the other agent move? #
         if self.one_by_one:
@@ -189,10 +231,11 @@ class MDCVRPEnv:
             action_mask[:, :, : self.n_agents] = (
                 torch.eye(self.n_agents, dtype=torch.bool, device=self.device)
                 .unsqueeze(0)
-                .expand((td_shape[0], -1, -1))
+                .expand((batch_size, -1, -1))
             )
             action_mask[:, :, self.n_agents :] = True
         #####################################################################
+
         # if no_restart is enabled, mask out the agent with return_count is 1
         if self.no_restart:
             action_mask = torch.where(return_count.unsqueeze(-1) == 1, False, action_mask)
@@ -208,38 +251,9 @@ class MDCVRPEnv:
             demand.unsqueeze(1) > remaining_capacity.unsqueeze(2), False, action_mask[:, :, self.n_agents :]
         )
 
-        ### get done and reward
-        # done if no action is available for all agents
-        done = ~action_mask.any(dim=-1).any(dim=-1, keepdim=True)  # (batch_size, 1)
+        return action_mask
 
-        # if no action is available for any agent, unmask the first agent's depot
-        done_idx = torch.where(done)[0]
-        action_mask[done_idx, 0, 0] = True
-
-        # if done, reward is the total length of the tour
-        reward = self.get_reward(cum_length, done)  # (batch_size, 1)
-
-        td_step = TensorDict(
-            {
-                "loc": loc,
-                "demand": demand,
-                "agent_loc": agent_loc,
-                "agent_loc_idx": agent_loc_idx,
-                "remaining_capacity": remaining_capacity,
-                "cum_length": cum_length,
-                "return_count": return_count,
-                "action_mask": action_mask,
-                "reward": reward,
-                "done": done,
-            },
-            td.shape,
-            device=self.device,
-        )
-        if td_shape == torch.Size([]):
-            td_step = td_step.squeeze(0).to_tensordict()
-        return td_step
-
-    def get_reward(self, cum_length: torch.Tensor, done: torch.Tensor) -> torch.Tensor:
+    def get_reward(self, cum_length: torch.Tensor, demand: torch.Tensor, done: torch.Tensor) -> torch.Tensor:
         if self.intermediate_reward:
             raise NotImplementedError
 
@@ -249,6 +263,11 @@ class MDCVRPEnv:
 
         # If done, reward is the total length of the tour
         reward = -torch.sum(cum_length, dim=1, keepdim=True)  # (batch_size, 1)
+
+        # If some customer is not visited, the number of unvisited customers is subtracted from the reward
+        # This situation can happen only when no_restart is enabled
+        if self.no_restart:
+            reward = reward - torch.sum(demand > 0, dim=1, keepdim=True)
 
         # If imbalance penalty is enabled, penalize the imbalance of the tour length
         if self.imbalance_penalty:
