@@ -151,11 +151,12 @@ class MDCVRPTester:
 
 
 if __name__ == "__main__":
-    file_name = "example"
+    testset_path = "data/test/N20_M2_D3/example.csv"  # None for randomly generated testset
+    exp_name = "random" if testset_path is None else Path(testset_path).stem
 
     env_params = {
         ### When test with pre-generated testset ###
-        "testset_path": None,  # None for randomly generated testset
+        "testset_path": testset_path,  # None for randomly generated testset
         ### params for randomly generated testset, if testset_path is given, they are ignored ###
         "n_custs": 20,
         "n_agents": 2,
@@ -179,10 +180,10 @@ if __name__ == "__main__":
         ### CPU or GPU ###
         "device": "cuda",  # "cpu" or "cuda"
         ### Testing ###
-        "batch_size": 100,
+        "batch_size": 256,
         ### Logging and Saving ###
         "result_dir": "test_results",
-        "exp_name": file_name,
+        "exp_name": exp_name,
     }
 
     tester = MDCVRPTester(env_params, model_params, tester_params)

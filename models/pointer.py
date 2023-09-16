@@ -50,7 +50,7 @@ class PtrNet(nn.Module):
         # expand rnn_last_hidden to match the batch size of rnn_input_z
         if rnn_last_hidden is not None:
             rnn_last_hidden = rnn_last_hidden.unsqueeze(2).expand(-1, -1, n_agents, -1)
-            rnn_last_hidden = rnn_last_hidden.flatten(start_dim=1, end_dim=2)
+            rnn_last_hidden = rnn_last_hidden.flatten(start_dim=1, end_dim=2).contiguous()
             # (num_layers, batch_size * n_agents, hidden_size)
 
         rnn_out, rnn_hidden = self.rnn(rnn_input_z, rnn_last_hidden)
