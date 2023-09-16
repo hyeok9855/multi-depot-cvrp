@@ -235,7 +235,7 @@ class MDCVRPTrainer:
 if __name__ == "__main__":
     from trainer import MDCVRPTrainer
 
-    exp_name = "debug"
+    exp_name = "train"
 
     env_params = {
         "n_custs": 20,
@@ -254,13 +254,12 @@ if __name__ == "__main__":
 
     model_params = {
         "actor_params": {
-            "loc_encoder_params": {"hidden_size": 256},
-            "rnn_input_encoder_params": {"hidden_size": 256},
-            "ptrnet_params": {"hidden_size": 256, "num_layers": 1, "dropout": 0.05, "glimpse": False},
+            "loc_encoder_params": {"hidden_size": 128},
+            "rnn_input_encoder_params": {"hidden_size": 128},
+            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
-            "loc_encoder_params": {"hidden_size": 256},
-            "hidden_size": 256,
+            "loc_encoder_params": {"hidden_size": 128},
         },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
         "critic_optimizer": {"lr": 5e-4},

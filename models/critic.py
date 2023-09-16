@@ -19,13 +19,13 @@ class Critic(nn.Module):
     the encoder + decoder, and returns an estimate of complexity
     """
 
-    def __init__(self, env: MDCVRPEnv, loc_encoder_params: dict[str, Any], hidden_size: int):
+    def __init__(self, env: MDCVRPEnv, loc_encoder_params: dict[str, Any]):
         super().__init__()
 
         self.env = env
         self.loc_encoder = Encoder(**loc_encoder_params)
 
-        self.conv1 = nn.Conv1d(hidden_size, 20, kernel_size=1)
+        self.conv1 = nn.Conv1d(loc_encoder_params["hidden_size"], 20, kernel_size=1)
         self.conv2 = nn.Conv1d(20, 20, kernel_size=1)
         self.conv3 = nn.Conv1d(20, 1, kernel_size=1)
 
