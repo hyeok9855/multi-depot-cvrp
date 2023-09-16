@@ -51,11 +51,10 @@ class PtrNet(nn.Module):
         if rnn_last_hidden is not None:
             rnn_last_hidden = rnn_last_hidden.unsqueeze(2).expand(-1, -1, n_agents, -1)
             rnn_last_hidden = rnn_last_hidden.flatten(start_dim=1, end_dim=2)
-            # rnn_last_hidden: (num_layers, batch_size * n_agents, hidden_size)
+            # (num_layers, batch_size * n_agents, hidden_size)
 
         rnn_out, rnn_hidden = self.rnn(rnn_input_z, rnn_last_hidden)
-        # rnn_out: (batch_size * n_agents, 1, hidden_size)
-        # rnn_hidden: (num_layers, batch_size * n_agents, hidden_size)
+        # (batch_size * n_agents, 1, hidden_size), (num_layers, batch_size * n_agents, hidden_size)
 
         # apply dropout on the RNN output
         if self.dropout > 0:
@@ -72,7 +71,7 @@ class PtrNet(nn.Module):
         # Given a summary of the current trajectory, obtain an input context
         if self.glimpse:
             context_w = self.context_attention(att_query, att_key, return_prob=True)
-            # context_w: (batch_size, n_agents * n_nodes)
+            # (batch_size, n_agents * n_nodes)
             context_w = context_w.view(-1, n_agents, n_nodes)  # (batch_size, n_agents, n_nodes)
             context = torch.bmm(context_w, att_key.transpose(1, 2))  # (batch_size, n_agents, hidden_size)
             context = context.transpose(1, 2)  # (batch_size, hidden_size, n_agents)
@@ -83,7 +82,7 @@ class PtrNet(nn.Module):
 
         # unflatten and apply max pooling to agent axis
         rnn_hidden = rnn_hidden.view(self.num_layers, -1, n_agents, self.hidden_size)
-        # rnn_hidden: (num_layers, batch_size, n_agents, hidden_size)
+        # (num_layers, batch_size, n_agents, hidden_size)
         rnn_hidden = rnn_hidden.mean(dim=2)  # (num_layers, batch_size, hidden_size)
 
         return output_logit, rnn_hidden

@@ -68,15 +68,15 @@ class Actor(nn.Module):
         return obs_td, actions, log_probs, rewards
 
     def get_rnn_input_x(self, obs_td: TensorDict) -> torch.Tensor:
-        rnn_input_loc = cast(torch.FloatTensor, obs_td["agent_loc"])  # (batch_size, n_agents, 2)
-        rnn_input_depot = cast(
-            torch.FloatTensor, obs_td["loc"][:, : self.env.n_agents, :]
-        )  # (batch_size, n_agents, 2)
-        rnn_input_cap = cast(
-            torch.FloatTensor, obs_td["remaining_capacity"].unsqueeze(-1)
-        )  # (batch_size, n_agents, 1)
-        rnn_input_x = torch.cat([rnn_input_loc, rnn_input_depot, rnn_input_cap], dim=-1)  # (batch_size, n_agents, 5)
-        rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 5, n_agents)
+        rnn_input_loc = cast(torch.FloatTensor, obs_td["agent_loc"])
+        # (batch_size, n_agents, dimension)
+        rnn_input_depot = cast(torch.FloatTensor, obs_td["loc"][:, : self.env.n_agents, :])
+        # (batch_size, n_agents, dimension)
+        rnn_input_cap = cast(torch.FloatTensor, obs_td["remaining_capacity"].unsqueeze(-1))
+        # (batch_size, n_agents, 1)
+        rnn_input_x = torch.cat([rnn_input_loc, rnn_input_depot, rnn_input_cap], dim=-1)
+        # (batch_size, n_agents, 2 * dimension + 1)
+        rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 2 * dimension + 1, n_agents)
 
         assert rnn_input_x.shape[1] == self.rnn_input_encoder.input_size
         return rnn_input_x
@@ -98,7 +98,9 @@ class Actor(nn.Module):
         """
 
         ### Location Encoding
-        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_nodes, 2) ... n_nodes = n_custs + n_agents
+        loc = cast(
+            torch.FloatTensor, obs_td["loc"]
+        )  # (batch_size, n_nodes, dimension) ... n_nodes = n_custs + n_agents
         demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_custs)
         # Augment demand with dummy demand for agents
         aug_demand = torch.cat(
@@ -111,10 +113,9 @@ class Actor(nn.Module):
         ### Pointer Network
         rnn_input_x = self.get_rnn_input_x(obs_td)  # (batch_size, 5, n_agents)
         rnn_input_z = self.rnn_input_encoder(rnn_input_x).transpose(1, 2).unsqueeze(-2)
-        # rnn_input_z: (batch_size, n_agents, 1, hidden_size)
+        # (batch_size, n_agents, 1, hidden_size)
         action_logit, rnn_hidden = self.ptrnet(rnn_input_z, rnn_last_hidden, att_key=loc_z)
-        # action_logit: (batch_size, n_agents * n_nodes)
-        # rnn_hidden: (batch_size, hidden_size)
+        # (batch_size, n_agents * n_nodes), (batch_size, hidden_size)
 
         # Sample actions with action mask
         action_mask = cast(torch.BoolTensor, obs_td["action_mask"])  # (batch_size, n_agents, n_nodes)

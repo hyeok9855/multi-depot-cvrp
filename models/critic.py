@@ -35,7 +35,7 @@ class Critic(nn.Module):
 
     def forward(self, obs_td: TensorDict):
         # Use the same input as the actor's loc_encoder
-        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_custs, 2)
+        loc = cast(torch.FloatTensor, obs_td["loc"])  # (batch_size, n_agents + n_custs, dimension)
         demand = cast(torch.FloatTensor, obs_td["demand"])  # (batch_size, n_custs)
         # Augment demand with dummy demand for agents
         aug_demand = torch.cat(

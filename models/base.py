@@ -40,11 +40,11 @@ class Attention(nn.Module):
 
         att_query = att_query.unsqueeze(3).expand(-1, -1, -1, num_keys)
         att_key = att_key.unsqueeze(2).expand(-1, -1, num_queries, -1)
-        # att_query, att_key: (batch_size, query/key_hidden_size, num_queries, num_keys)
+        # both shape is (batch_size, query/key_hidden_size, num_queries, num_keys)
 
         # Concatenate the query and key features
         att_hidden = torch.cat((att_query, att_key), 1).flatten(start_dim=2)
-        # att_hidden: (batch_size, query_hidden_size + key_hidden_size, num_queries * num_keys)
+        # (batch_size, query_hidden_size + key_hidden_size, num_queries * num_keys)
 
         # Broadcast some dimensions so we can do batch-matrix-multiply
         v = self.v.expand(batch_size, 1, self.hidden_size)

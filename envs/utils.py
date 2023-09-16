@@ -1,14 +1,6 @@
 # """
 # Utils for envs
 # """
-# from tensordict.tensordict import TensorDict
-# import numpy as np
-# import torch
-
-
-# def npdict_to_tensordict(npdict: dict[str, np.ndarray], device: str = None) -> TensorDict:
-#     batch_size = npdict[list(npdict.keys())[0]].shape[0]
-#     return TensorDict(npdict, batch_size=batch_size, device=device)
 
 
 def gather_by_index(src, idx, dim=1, squeeze=True):

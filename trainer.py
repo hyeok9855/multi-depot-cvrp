@@ -32,7 +32,12 @@ class MDCVRPTrainer:
 
         ### update common params ###
         self.env_params.update({"device": self.trainer_params["device"]})
+        d: int = self.env_params["dimension"]
         self.device = torch.device(self.trainer_params["device"])
+        # update input_size params of models
+        self.model_params["actor_params"]["loc_encoder_params"].update({"input_size": d + 1})
+        self.model_params["actor_params"]["rnn_input_encoder_params"].update({"input_size": 2 * d + 1})
+        self.model_params["critic_params"]["loc_encoder_params"].update({"input_size": d + 1})
 
         ### Env ###
         self.env = MDCVRPEnv(**self.env_params)
@@ -44,7 +49,7 @@ class MDCVRPTrainer:
         self.critic_optimizer = Adam(self.critic.parameters(), **model_params["critic_optimizer"])
 
         ### Paths & Loggers ###
-        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}"
+        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}_D{self.env_params['dimension']}"
         exp_name = f"{self.trainer_params['exp_name']}_{NOW}"
 
         # Paths
@@ -233,8 +238,9 @@ if __name__ == "__main__":
     exp_name = "debug"
 
     env_params = {
-        "n_custs": 20,
+        "n_custs": 10,
         "n_agents": 2,
+        "dimension": 3,
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
@@ -243,16 +249,17 @@ if __name__ == "__main__":
         "one_by_one": False,
         "intermediate_reward": False,
         "imbalance_penalty": True,
+        "no_restart": True,
     }
 
     model_params = {
         "actor_params": {
-            "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
-            "rnn_input_encoder_params": {"input_size": 5, "hidden_size": 128},
+            "loc_encoder_params": {"hidden_size": 128},
+            "rnn_input_encoder_params": {"hidden_size": 128},
             "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
-            "loc_encoder_params": {"input_size": 3, "hidden_size": 128},
+            "loc_encoder_params": {"hidden_size": 128},
             "hidden_size": 128,
         },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
@@ -275,7 +282,7 @@ if __name__ == "__main__":
         "use_tensorboard": True,
         "tb_log_dir": "logs",
         "save_figure_interval": 10,  # -1 for not saving
-        "save_model_interval": 10,  # -1 for not saving
+        "save_model_interval": 50,  # -1 for not saving
         "exp_name": exp_name,
     }
 
