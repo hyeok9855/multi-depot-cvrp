@@ -98,6 +98,7 @@ class MDCVRPTester:
         test_dataloader = DataLoader(self.test_dataset, batch_size=self.tester_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         with torch.no_grad():
+            n_success = 0
             for batch_idx, batch in enumerate(test_dataloader):
                 self.env.reset(batch)  # to take steps with mini-batch
                 obs_td, actions, _, _ = self.actor(batch)
@@ -115,7 +116,9 @@ class MDCVRPTester:
 
                 for _i, (_td, _actions) in enumerate(zip(obs_td, actions)):
                     instance_idx = batch_idx * self.tester_params["batch_size"] + _i
+
                     success = _td["demand"].sum(dim=-1).eq(0).numpy().item()
+                    n_success += success
                     log_msg = f"Instance {instance_idx} Result [{'SUCCESS' if success else 'FAILED'}]\n"
 
                     # print agent-wise results
@@ -135,9 +138,16 @@ class MDCVRPTester:
                         a_route.append("D")
                         log_msg += f"Agent {_a} [{agent_length[_a]:.3f}] ::: {' > '.join(agent_route[_a])}\n"
 
-                    self.logger.info(log_msg)
-                    self.file_logger.info(log_msg)
+                    self.log(log_msg)
                     self.env.render(_td, _actions, save_path=self.figure_dir / f"instance{instance_idx}.png")
+
+        n_samples = len(self.test_dataset)
+        self.log(f"Success Rate: {n_success}/{n_samples} ({100 * n_success / n_samples:.2f}%)")
+        self.log(f"Testing Finished!")
+
+    def log(self, msg: str) -> None:
+        self.logger.info(msg)
+        self.file_logger.info(msg)
 
 
 if __name__ == "__main__":
@@ -162,12 +172,12 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "model_ckpt_path": "results/N20_M2_D3/train_230916-220326/checkpoints/epoch450.pth",
+        "model_ckpt_path": "results/N20_M2_D3/train_230917-010958/checkpoints/epoch400.pth",
     }
 
     tester_params = {
         ### CPU or GPU ###
-        "device": "cpu",
+        "device": "cuda",  # "cpu" or "cuda"
         ### Testing ###
         "batch_size": 100,
         ### Logging and Saving ###

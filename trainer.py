@@ -94,7 +94,7 @@ class MDCVRPTrainer:
             )
 
     def train(self) -> None:
-        self.logger.info("Start training...")
+        self.log("Start training...")
 
         n_epochs = self.trainer_params["n_epochs"]
         for epoch in range(1, n_epochs + 1):
@@ -113,8 +113,7 @@ class MDCVRPTrainer:
                 f"Actor Loss: {val_actor_loss:.3f} | "
                 f"Critic Loss: {val_critic_loss:.3f}"
             )
-            self.logger.info(log_msg)
-            self.file_logger.info(log_msg)
+            self.log(log_msg)
 
             if self.use_tensorboard and self.tb_logger is not None:
                 self.tb_logger.log_value("TRAIN reward/epoch", tr_reward, step=epoch)
@@ -130,7 +129,7 @@ class MDCVRPTrainer:
             if epoch == 1 or epoch % self.trainer_params["save_model_interval"] == 0:
                 self.save_model(epoch)
 
-        self.logger.info("Finish training...")
+        self.log("Training finished!")
 
     def train_epoch(self, epoch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         self.actor.phase = "train"
@@ -231,6 +230,10 @@ class MDCVRPTrainer:
             },
             self.checkpoint_dir / f"epoch{epoch}.pth",
         )
+
+    def log(self, msg: str) -> None:
+        self.logger.info(msg)
+        self.file_logger.info(msg)
 
 
 if __name__ == "__main__":
