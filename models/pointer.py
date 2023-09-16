@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.base import Encoder, Attention
+from models.base import Attention
 
 
 class PtrNet(nn.Module):
@@ -39,7 +39,7 @@ class PtrNet(nn.Module):
         Args:
             rnn_input_z: (batch_size, n_agents, 1, hidden_size)
             rnn_last_hidden: (num_layers, batch_size, hidden_size)
-            att_key: (batch_size, hidden_size, n_nodes)
+            att_key: (batch_size, hidden_size, n_nodes) ... node info
         """
 
         n_agents = rnn_input_z.shape[1]
@@ -66,7 +66,7 @@ class PtrNet(nn.Module):
         # unflatten rnn_out
         rnn_out = rnn_out.squeeze(1)  # (batch_size * n_agents, hidden_size)
         rnn_out = rnn_out.view(-1, n_agents, self.hidden_size)  # (batch_size, n_agents, hidden_size)
-        att_query = rnn_out.transpose(1, 2)  # (batch_size, hidden_size, n_agents)
+        att_query = rnn_out.transpose(1, 2)  # (batch_size, hidden_size, n_agents) ... agent info
 
         # Given a summary of the current trajectory, obtain an input context
         if self.glimpse:

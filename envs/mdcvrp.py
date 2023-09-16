@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class MDCVRPEnv:
     """
-    Env for Multi-Depot Capacitated Vehicle Routing Problem
+    Environment for Multi-Depot Capacitated Vehicle Routing Problem
 
     Args:
         n_custs: Number of customers
@@ -165,12 +165,12 @@ class MDCVRPEnv:
         # done if no action is available for all agents
         done = ~action_mask.any(dim=-1).any(dim=-1, keepdim=True)  # (batch_size, 1)
 
-        # if no action is available for any agent, unmask the first agent's depot
+        # get reward
+        reward = self.get_reward(cum_length, demand, done)  # (batch_size, 1)
+
+        # if no action is available for any agent, unmask the first agent's depot to avoid distribution error
         done_idx = torch.where(done)[0]
         action_mask[done_idx, 0, 0] = True
-
-        # if done, reward is the total length of the tour
-        reward = self.get_reward(cum_length, demand, done)  # (batch_size, 1)
 
         td_step = TensorDict(
             {
@@ -238,7 +238,7 @@ class MDCVRPEnv:
 
         # if no_restart is enabled, mask out the agent with return_count is 1
         if self.no_restart:
-            action_mask = torch.where(return_count.unsqueeze(-1) == 1, False, action_mask)
+            action_mask = torch.where(return_count.unsqueeze(-1) >= 1, False, action_mask)
 
         # mask out the nodes that the agent is currently at
         action_mask = torch.scatter(input=action_mask, index=agent_loc_idx.unsqueeze(-1), dim=2, value=False)

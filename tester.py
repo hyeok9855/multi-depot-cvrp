@@ -115,20 +115,25 @@ class MDCVRPTester:
 
                 for _i, (_td, _actions) in enumerate(zip(obs_td, actions)):
                     instance_idx = batch_idx * self.tester_params["batch_size"] + _i
-                    log_msg = f"Instance {instance_idx} Result\n"
+                    success = _td["demand"].sum(dim=-1).eq(0).numpy().item()
+                    log_msg = f"Instance {instance_idx} Result [{'SUCCESS' if success else 'FAILED'}]\n"
 
                     # print agent-wise results
-                    agent_route = [[] for _ in range(self.env.n_agents)]
+                    agent_route = [["D"] for _ in range(self.env.n_agents)]
 
                     for _agent_idx, _node_idx in list(_actions):
                         _agent_idx, _node_idx = int(_agent_idx.item()), int(_node_idx.item())
-                        _idx = -1 if _node_idx < self.env.n_agents else _node_idx - self.env.n_agents
+                        _idx = "D" if _node_idx < self.env.n_agents else str(_node_idx - self.env.n_agents)
                         agent_route[_agent_idx].append(_idx)
 
-                    agent_length = _td["cum_length"].cpu().numpy()  # (n_agents,)
+                    agent_length = _td["cum_length"].numpy()  # (n_agents,)
 
                     for _a in range(self.env.n_agents):
-                        log_msg += f"Agent {_a} [{agent_length[_a]:.3f}] ::: {' > '.join(map(str, agent_route[_a]))}\n"
+                        a_route = agent_route[_a]
+                        while a_route[-1] == "D":
+                            a_route.pop()
+                        a_route.append("D")
+                        log_msg += f"Agent {_a} [{agent_length[_a]:.3f}] ::: {' > '.join(agent_route[_a])}\n"
 
                     self.logger.info(log_msg)
                     self.file_logger.info(log_msg)
@@ -136,13 +141,11 @@ class MDCVRPTester:
 
 
 if __name__ == "__main__":
-    from tester import MDCVRPTester
-
     file_name = "example"
 
     env_params = {
         ### When test with pre-generated testset ###
-        "testset_path": f"data/test/N20_M2_D3/{file_name}.csv",
+        "testset_path": None,  # None for randomly generated testset
         ### params for randomly generated testset, if testset_path is given, they are ignored ###
         "n_custs": 20,
         "n_agents": 2,
@@ -150,23 +153,23 @@ if __name__ == "__main__":
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
-        "max_demand": 9,
-        "vehicle_capacity": None,
-        "test_n_samples": 0,
+        "max_demand": 1,
+        "vehicle_capacity": 1000,
+        "test_n_samples": 100,
         ### Env logic params ###
-        "one_by_one": True,
+        "one_by_one": False,
         "no_restart": True,
     }
 
     model_params = {
-        "model_ckpt_path": "results/N20_M2_D3/debug_230916-204136/checkpoints/epoch200.pth",
+        "model_ckpt_path": "results/N20_M2_D3/train_230916-220326/checkpoints/epoch450.pth",
     }
 
     tester_params = {
         ### CPU or GPU ###
         "device": "cpu",
         ### Testing ###
-        "batch_size": 256,
+        "batch_size": 100,
         ### Logging and Saving ###
         "result_dir": "test_results",
         "exp_name": file_name,

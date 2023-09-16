@@ -97,7 +97,7 @@ class MDCVRPTrainer:
         self.logger.info("Start training...")
 
         n_epochs = self.trainer_params["n_epochs"]
-        for epoch in range(n_epochs):
+        for epoch in range(1, n_epochs + 1):
             tr_reward, tr_length, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
             val_reward, val_length, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
 
@@ -127,7 +127,7 @@ class MDCVRPTrainer:
                 self.tb_logger.log_value("VALID loss/epoch", val_actor_loss, step=epoch)
                 self.tb_logger.log_value("VALID critic_loss/epoch", val_critic_loss, step=epoch)
 
-            if epoch % self.trainer_params["save_model_interval"] == 0:
+            if epoch == 1 or epoch % self.trainer_params["save_model_interval"] == 0:
                 self.save_model(epoch)
 
         self.logger.info("Finish training...")
@@ -141,8 +141,9 @@ class MDCVRPTrainer:
         train_dataloader = DataLoader(train_dataset, batch_size=self.trainer_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         e_rewards = e_lengths = e_actor_losses = e_critic_losses = torch.empty((0,), device=train_dataset.device)
-        for batch_idx, batch in enumerate(tqdm(train_dataloader)):
+        for batch_idx, batch in enumerate(tqdm(train_dataloader), 1):
             self.env.reset(batch)  # to take steps with mini-batch
+
             obs_td, _, log_probs, rewards = self.actor(batch)
             rewards = rewards[:, -1]  # (batch_size,), we use only the last reward. TODO: support intermediate rewards
             lengths = obs_td["cum_length"].sum(dim=1)  # (batch_size,)
@@ -152,7 +153,7 @@ class MDCVRPTrainer:
             self.optimize_models(actor_loss, critic_loss)
 
             if self.use_tensorboard and self.tb_logger is not None:
-                step = epoch * self.step_per_epoch + batch_idx
+                step = (epoch - 1) * self.step_per_epoch + batch_idx
                 self.tb_logger.log_value("TRAIN reward/step", rewards.mean(), step=step)
                 self.tb_logger.log_value("TRAIN length/step", lengths.mean(), step=step)
                 self.tb_logger.log_value("TRAIN actor_loss/step", actor_loss, step=step)
@@ -171,7 +172,7 @@ class MDCVRPTrainer:
         self.critic.eval()
 
         if self.trainer_params["fix_valid_dataset"]:
-            if epoch == 0:
+            if epoch == 1:
                 self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
             valid_dataset = self.valid_dataset
         else:
@@ -181,7 +182,7 @@ class MDCVRPTrainer:
 
         e_rewards = e_lengths = e_actor_losses = e_critic_losses = torch.empty((0,), device=valid_dataset.device)
         with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(valid_dataloader)):
+            for batch_idx, batch in enumerate(tqdm(valid_dataloader), 1):
                 self.env.reset(batch)  # to take steps with mini-batch
                 obs_td, actions, log_probs, rewards = self.actor(batch)
                 reward = rewards[:, -1]  # (batch_size,), Now, we use only the last reward
@@ -195,7 +196,7 @@ class MDCVRPTrainer:
                 e_actor_losses = torch.cat([e_actor_losses, actor_loss.unsqueeze(0)])
                 e_critic_losses = torch.cat([e_critic_losses, critic_loss.unsqueeze(0)])
 
-                if epoch % self.trainer_params["save_figure_interval"] == 0 and batch_idx == 0:
+                if (epoch == 1 or epoch % self.trainer_params["save_figure_interval"] == 0) and batch_idx == 1:
                     self.env.render(obs_td, actions, save_path=self.figure_dir / f"epoch{epoch}.png")
 
         return e_rewards.mean(), e_lengths.mean(), e_actor_losses.mean(), e_critic_losses.mean()
@@ -233,10 +234,6 @@ class MDCVRPTrainer:
 
 
 if __name__ == "__main__":
-    from trainer import MDCVRPTrainer
-
-    exp_name = "train"
-
     env_params = {
         "n_custs": 20,
         "n_agents": 2,
@@ -245,21 +242,21 @@ if __name__ == "__main__":
         "max_loc": 1,
         "min_demand": 1,
         "max_demand": 1,
-        "vehicle_capacity": 100,
+        "vehicle_capacity": 1000,
         "one_by_one": False,
-        "intermediate_reward": False,
+        "intermediate_reward": False,  # TODO: support intermediate reward
         "imbalance_penalty": True,
         "no_restart": True,
     }
 
     model_params = {
         "actor_params": {
-            "loc_encoder_params": {"hidden_size": 128},
-            "rnn_input_encoder_params": {"hidden_size": 128},
-            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05, "glimpse": False},
+            "loc_encoder_params": {"hidden_size": 64},
+            "rnn_input_encoder_params": {"hidden_size": 64},
+            "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
-            "loc_encoder_params": {"hidden_size": 128},
+            "loc_encoder_params": {"hidden_size": 64},
         },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
         "critic_optimizer": {"lr": 5e-4},
@@ -272,17 +269,16 @@ if __name__ == "__main__":
         "n_epochs": 500,
         "train_n_samples": 10000,
         "valid_n_samples": 1000,
+        "fix_valid_dataset": True,
         "batch_size": 256,
         "max_grad_norm": 2.0,
-        ### Validation ###
-        "fix_valid_dataset": True,
         ### Logging and Saving ###
         "result_dir": "results",
-        "use_tensorboard": True,
         "tb_log_dir": "logs",
+        "use_tensorboard": True,  # tensorboard --logdir logs
         "save_figure_interval": 10,  # -1 for not saving
         "save_model_interval": 50,  # -1 for not saving
-        "exp_name": exp_name,
+        "exp_name": "train",
     }
 
     trainer = MDCVRPTrainer(env_params, model_params, trainer_params)
