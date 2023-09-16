@@ -238,7 +238,7 @@ if __name__ == "__main__":
     exp_name = "debug"
 
     env_params = {
-        "n_custs": 10,
+        "n_custs": 20,
         "n_agents": 2,
         "dimension": 3,
         "min_loc": 0,
@@ -254,13 +254,13 @@ if __name__ == "__main__":
 
     model_params = {
         "actor_params": {
-            "loc_encoder_params": {"hidden_size": 128},
-            "rnn_input_encoder_params": {"hidden_size": 128},
-            "ptrnet_params": {"hidden_size": 128, "num_layers": 1, "dropout": 0.05, "glimpse": False},
+            "loc_encoder_params": {"hidden_size": 256},
+            "rnn_input_encoder_params": {"hidden_size": 256},
+            "ptrnet_params": {"hidden_size": 256, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
-            "loc_encoder_params": {"hidden_size": 128},
-            "hidden_size": 128,
+            "loc_encoder_params": {"hidden_size": 256},
+            "hidden_size": 256,
         },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
         "critic_optimizer": {"lr": 5e-4},

@@ -2,7 +2,7 @@
 Multi-depot CVRP environment
 """
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 import warnings
 
 from tensordict.tensordict import TensorDict
@@ -303,14 +303,13 @@ class MDCVRPEnv:
         )
 
     @classmethod
-    def from_csv(
-        cls, path: Path | str, device: str = "cpu", one_by_one: bool = True
-    ) -> tuple["MDCVRPEnv", TensorDict]:
+    def from_csv(cls, testset_path: Path | str, **kwargs) -> tuple["MDCVRPEnv", TensorDict, dict[str, Any]]:
         """Generate the environment from a csv file"""
         # Note that in this case, the batch_size must be 1 (TODO: support batch_size > 1)
-        df = pd.read_csv(path)
+        df = pd.read_csv(testset_path)
         custs = df[df["type"] == "cust"]
         agents = df[df["type"] == "agent"]
+        dimension = 3 if "z" in df.columns else 2
 
         n_custs = custs.shape[0]
         n_agents = agents.shape[0]
@@ -324,10 +323,22 @@ class MDCVRPEnv:
         vehicle_capacity = agents["value"].iloc[0].item()
 
         ### Generate data from csv ###
-        env = cls(n_custs, n_agents, min_loc, max_loc, min_demand, max_demand, vehicle_capacity, device, one_by_one)
+        kwargs.update(
+            {
+                "n_custs": n_custs,
+                "n_agents": n_agents,
+                "dimension": dimension,
+                "min_loc": min_loc,
+                "max_loc": max_loc,
+                "min_demand": min_demand,
+                "max_demand": max_demand,
+                "vehicle_capacity": vehicle_capacity,
+            }
+        )
+        env = cls(**kwargs)
         td = env.generate_data_from_csv(df=df)
 
-        return env, td
+        return env, td, kwargs
 
     def generate_data_from_csv(self, df: pd.DataFrame | None = None, path: Path | str | None = None) -> TensorDict:
         """Load the data from a csv file or a dataframe"""
@@ -337,7 +348,12 @@ class MDCVRPEnv:
             assert path is not None, "Either df or path must be specified"
             df = pd.read_csv(path)
 
-        loc = torch.FloatTensor(df[["x", "y"]].values).unsqueeze(0)
+        dimension = 3 if "z" in df.columns else 2
+
+        if dimension == 2:
+            loc = torch.FloatTensor(df[["x", "y"]].values).unsqueeze(0)
+        else:
+            loc = torch.FloatTensor(df[["x", "y", "z"]].values).unsqueeze(0)
 
         demand = torch.FloatTensor(df.loc[df["type"] == "cust", "value"].values).unsqueeze(0) / self.vehicle_capacity
         agent_loc = loc[:, : self.n_agents, :].clone()

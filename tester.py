@@ -32,12 +32,8 @@ class MDCVRPTester:
         self.env_params.update({"device": self.tester_params["device"]})
         self.device = torch.device(self.tester_params["device"])
 
-        ### Paths & Loggers ###
-        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}"
-        exp_name = f"{self.tester_params['exp_name']}_{NOW}"
-
         ### Env ###
-        self.env, self.test_dataset = self.setup_test()
+        self.env, self.test_dataset, self.env_params = self.setup_test()
 
         ### Load Model ###
         with open(Path(self.model_params["model_ckpt_path"]).parent.parent / "params.json", "r") as f:
@@ -48,6 +44,10 @@ class MDCVRPTester:
 
         self.actor.load_state_dict(torch.load(self.model_params["model_ckpt_path"])["actor"])
         self.critic.load_state_dict(torch.load(self.model_params["model_ckpt_path"])["critic"])
+
+        ### Paths & Loggers ###
+        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}_D{self.env_params['dimension']}"
+        exp_name = f"{self.tester_params['exp_name']}_{NOW}"
 
         # Paths
         self.result_dir = Path(self.tester_params["result_dir"]) / prob_setting / exp_name
@@ -75,17 +75,18 @@ class MDCVRPTester:
                 indent=4,
             )
 
-    def setup_test(self) -> tuple[MDCVRPEnv, TensorDict]:
+    def setup_test(self) -> tuple[MDCVRPEnv, TensorDict, dict[str, Any]]:
         """
         Create test environment and make test dataset
         If testset_path is given, env is created based on it
         """
         if self.env_params["testset_path"] is not None:
-            env, td = MDCVRPEnv.from_csv(self.env_params["testset_path"], device=self.env_params["device"])
+            env, td, env_params = MDCVRPEnv.from_csv(**self.env_params)
         else:
             env = MDCVRPEnv(**self.env_params)
             td = env.generate_data(self.env_params["test_n_samples"])
-        return env, td
+            env_params = self.env_params
+        return env, td, env_params
 
     def test(self) -> None:
         self.logger.info("Start Testing...")
@@ -99,7 +100,7 @@ class MDCVRPTester:
         with torch.no_grad():
             for batch_idx, batch in enumerate(test_dataloader):
                 self.env.reset(batch)  # to take steps with mini-batch
-                obs_td, actions, _, rewards = self.actor(batch)
+                obs_td, actions, _, _ = self.actor(batch)
 
                 # to cpu for logging
                 obs_td, actions = obs_td.cpu(), actions.cpu()
@@ -141,21 +142,24 @@ if __name__ == "__main__":
 
     env_params = {
         ### When test with pre-generated testset ###
-        "testset_path": f"data/test/N20_M2/{file_name}.csv",
-        ### When test with randomly generated testset ###
+        "testset_path": f"data/test/N20_M2_D3/{file_name}.csv",
+        ### params for randomly generated testset, if testset_path is given, they are ignored ###
         "n_custs": 20,
         "n_agents": 2,
+        "dimension": 3,
         "min_loc": 0,
         "max_loc": 1,
         "min_demand": 1,
         "max_demand": 9,
         "vehicle_capacity": None,
-        "one_by_one": True,
         "test_n_samples": 0,
+        ### Env logic params ###
+        "one_by_one": True,
+        "no_restart": True,
     }
 
     model_params = {
-        "model_ckpt_path": "results/N20_M2/debug_230916-135710/checkpoints/epoch40.pth",
+        "model_ckpt_path": "results/N20_M2_D3/debug_230916-204136/checkpoints/epoch200.pth",
     }
 
     tester_params = {
