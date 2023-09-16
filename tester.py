@@ -51,17 +51,17 @@ class MDCVRPTester:
 
         # Paths
         self.result_dir = Path(self.tester_params["result_dir"]) / prob_setting / exp_name
-        self.stdout_dir = self.result_dir / "stdout"
         self.figure_dir = self.result_dir / "figures"
 
-        # Loggers
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.INFO)
-        self.logger.addHandler(logging.StreamHandler(sys.stdout))
-
-        # make dirs
-        for _dir in [self.result_dir, self.stdout_dir, self.figure_dir]:
+        for _dir in [self.result_dir, self.figure_dir]:
             _dir.mkdir(parents=True, exist_ok=True)
+
+        # Loggers
+        self.logger, self.file_logger = logging.getLogger("stdout_logger"), logging.getLogger("file_logger")
+        self.logger.setLevel(logging.INFO)
+        self.file_logger.setLevel(logging.INFO)
+        self.logger.addHandler(logging.StreamHandler(sys.stdout))
+        self.file_logger.addHandler(logging.FileHandler(self.result_dir / "stdout.log"))
 
         # save params
         with open(self.result_dir / "params.json", "w") as f:
@@ -115,8 +115,7 @@ class MDCVRPTester:
 
                 for _i, (_td, _actions) in enumerate(zip(obs_td, actions)):
                     instance_idx = batch_idx * self.tester_params["batch_size"] + _i
-
-                    self.logger.info(f"RESULT for instance {instance_idx}")
+                    log_msg = f"Instance {instance_idx} Result\n"
 
                     # print agent-wise results
                     agent_route = [[] for _ in range(self.env.n_agents)]
@@ -129,10 +128,10 @@ class MDCVRPTester:
                     agent_length = _td["cum_length"].cpu().numpy()  # (n_agents,)
 
                     for _a in range(self.env.n_agents):
-                        self.logger.info(
-                            f"Agent {_a} [{agent_length[_a]:.3f}] ::: -1 > {' > '.join(map(str, agent_route[_a]))}"
-                        )
+                        log_msg += f"Agent {_a} [{agent_length[_a]:.3f}] ::: {' > '.join(map(str, agent_route[_a]))}\n"
 
+                    self.logger.info(log_msg)
+                    self.file_logger.info(log_msg)
                     self.env.render(_td, _actions, save_path=self.figure_dir / f"instance{instance_idx}.png")
 
 
@@ -157,12 +156,12 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "model_ckpt_path": "results/N20_M2/debug_230915-235343/checkpoints/epoch190.pth",
+        "model_ckpt_path": "results/N20_M2/debug_230916-135710/checkpoints/epoch40.pth",
     }
 
     tester_params = {
         ### CPU or GPU ###
-        "device": "cuda",
+        "device": "cpu",
         ### Testing ###
         "batch_size": 256,
         ### Logging and Saving ###

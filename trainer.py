@@ -49,28 +49,32 @@ class MDCVRPTrainer:
 
         # Paths
         self.result_dir = Path(self.trainer_params["result_dir"]) / prob_setting / exp_name
-        self.stdout_dir = self.result_dir / "stdout"
         self.checkpoint_dir = self.result_dir / "checkpoints"
         self.figure_dir = self.result_dir / "figures"
-        self.tb_log_dir = None
 
         # Loggers
-        self.logger, self.tb_logger = logging.getLogger(), None
+        self.logger, self.file_logger = logging.getLogger("stdout_logger"), logging.getLogger("file_logger")
         self.logger.setLevel(logging.INFO)
+        self.file_logger.setLevel(logging.INFO)
         self.logger.addHandler(logging.StreamHandler(sys.stdout))
+        self.file_logger.addHandler(logging.FileHandler(self.result_dir / "stdout.log"))
+
+        for _dir in [self.result_dir, self.checkpoint_dir, self.figure_dir]:
+            _dir.mkdir(parents=True, exist_ok=True)
+
+        # tensorboard
+        self.tb_logger = None
+        self.tb_log_dir = None
         self.use_tensorboard = self.trainer_params["use_tensorboard"]
         if self.use_tensorboard:
             self.tb_log_dir = Path(self.trainer_params["tb_log_dir"]) / prob_setting / exp_name
+            self.tb_log_dir.mkdir(parents=True, exist_ok=True)
             self.tb_logger = TbLogger(self.tb_log_dir)
         self.step_per_epoch = (
             self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"]
             if self.trainer_params["train_n_samples"] % self.trainer_params["batch_size"] == 0
             else self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"] + 1
         )
-
-        # make dirs
-        for _dir in [self.result_dir, self.stdout_dir, self.checkpoint_dir, self.figure_dir, self.tb_log_dir]:
-            _dir.mkdir(parents=True, exist_ok=True)
 
         # save params
         with open(self.result_dir / "params.json", "w") as f:
@@ -92,18 +96,18 @@ class MDCVRPTrainer:
             tr_reward, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
             val_reward, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
 
-            self.logger.info(
+            log_msg = (
                 f"Epoch {epoch} TRAIN | "
-                + f"Reward: {tr_reward:.3f} | "
-                + f"Actor Loss: {tr_actor_loss:.3f} | "
-                + f"Critic Loss: {tr_critic_loss:.3f}"
-            )
-            self.logger.info(
+                f"Reward: {tr_reward:.3f} | "
+                f"Actor Loss: {tr_actor_loss:.3f} | "
+                f"Critic Loss: {tr_critic_loss:.3f}\n"
                 f"Epoch {epoch} VALID | "
-                + f"Reward: {val_reward:.3f} | "
-                + f"Actor Loss: {val_actor_loss:.3f} | "
-                + f"Critic Loss: {val_critic_loss:.3f}"
+                f"Reward: {val_reward:.3f} | "
+                f"Actor Loss: {val_actor_loss:.3f} | "
+                f"Critic Loss: {val_critic_loss:.3f}"
             )
+            self.logger.info(log_msg)
+            self.file_logger.info(log_msg)
 
             if self.use_tensorboard and self.tb_logger is not None:
                 self.tb_logger.log_value("TRAIN reward/epoch", tr_reward, step=epoch)
