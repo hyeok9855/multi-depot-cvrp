@@ -247,7 +247,7 @@ if __name__ == "__main__":
         "max_demand": 1,
         "vehicle_capacity": 1000,
         "one_by_one": False,
-        "no_restart": True,
+        "no_restart": False,
         "imbalance_penalty": True,
         "intermediate_reward": False,  # TODO: support intermediate reward
     }
@@ -256,7 +256,7 @@ if __name__ == "__main__":
         "actor_params": {
             "loc_encoder_params": {"hidden_size": 64},
             "rnn_input_encoder_params": {"hidden_size": 64},
-            "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": True},
+            "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
             "loc_encoder_params": {"hidden_size": 64},
@@ -281,7 +281,7 @@ if __name__ == "__main__":
         "use_tensorboard": True,  # tensorboard --logdir logs
         "save_figure_interval": 10,  # -1 for not saving
         "save_model_interval": 50,  # -1 for not saving
-        "exp_name": "glipse",
+        "exp_name": "allow_restart",
     }
 
     trainer = MDCVRPTrainer(env_params, model_params, trainer_params)
