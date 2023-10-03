@@ -97,6 +97,8 @@ class MDCVRPTrainer:
         self.log("Start training...")
 
         n_epochs = self.trainer_params["n_epochs"]
+        early_stop_metric = -float("inf")
+        early_stop_count = 0
         for epoch in range(1, n_epochs + 1):
             tr_reward, tr_length, tr_actor_loss, tr_critic_loss = self.train_epoch(epoch)
             val_reward, val_length, val_actor_loss, val_critic_loss = self.validate_epoch(epoch)
@@ -127,7 +129,21 @@ class MDCVRPTrainer:
                 self.tb_logger.log_value("VALID critic_loss/epoch", val_critic_loss, step=epoch)
 
             if epoch == 1 or epoch % self.trainer_params["save_model_interval"] == 0:
-                self.save_model(epoch)
+                self.save_model(f"epoch{epoch}")
+
+            new_metric = tr_reward if self.trainer_params["early_stop_metric"] == "reward" else -tr_length
+            new_best = new_metric > early_stop_metric
+
+            if new_best:
+                self.save_model("best")
+                early_stop_metric = new_metric
+                early_stop_count = 0
+            else:
+                early_stop_count += 1
+
+            if early_stop_count == self.trainer_params["ealry_stop_patience"]:
+                self.log(f"Early stopping because the reward has not improved for {early_stop_count} epochs.")
+                break
 
         self.log("Training finished!")
 
@@ -219,7 +235,7 @@ class MDCVRPTrainer:
             _loss.backward()
             _optimizer.step()
 
-    def save_model(self, epoch: int):
+    def save_model(self, file_name: str):
         """Save model parameters and optimizer state"""
         torch.save(
             {
@@ -228,7 +244,7 @@ class MDCVRPTrainer:
                 "actor_optimizer": self.actor_optimizer.state_dict(),
                 "critic_optimizer": self.critic_optimizer.state_dict(),
             },
-            self.checkpoint_dir / f"epoch{epoch}.pth",
+            self.checkpoint_dir / f"{file_name}.pth",
         )
 
     def log(self, msg: str) -> None:
@@ -248,7 +264,7 @@ if __name__ == "__main__":
         "vehicle_capacity": 1000,
         "one_by_one": False,
         "no_restart": False,
-        "imbalance_penalty": True,
+        "imbalance_penalty": True,  # TODO: decay imbalance penalty
         "intermediate_reward": False,  # TODO: support intermediate reward
     }
 
@@ -270,6 +286,8 @@ if __name__ == "__main__":
         "device": "cuda",
         ### Training ###
         "n_epochs": 500,
+        "early_stop_metric": "reward",  # "reward" or "length"
+        "ealry_stop_patience": 20,  # 0 for not using early stopping
         "train_n_samples": 10000,
         "valid_n_samples": 1000,
         "fix_valid_dataset": True,  # use the same validation dataset for all epochs, with seed 0
@@ -281,7 +299,7 @@ if __name__ == "__main__":
         "use_tensorboard": True,  # tensorboard --logdir logs
         "save_figure_interval": 10,  # -1 for not saving
         "save_model_interval": 50,  # -1 for not saving
-        "exp_name": "allow_restart",
+        "exp_name": "debug",
     }
 
     trainer = MDCVRPTrainer(env_params, model_params, trainer_params)
