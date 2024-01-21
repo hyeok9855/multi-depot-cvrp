@@ -105,15 +105,15 @@ class Actor(nn.Module):
         # Augment demand with dummy demand for agents
         aug_demand = torch.cat(
             [-torch.ones((demand.shape[0], self.env.n_agents), device=obs_td.device), demand], dim=1
-        )  # (batch_size, n_custs + n_agents)
-        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_nodes, 3)
-        loc_x = loc_x.transpose(1, 2)  # (batch_size, 3, n_nodes)
-        loc_z = self.loc_encoder(loc_x)  # (batch_size, hidden_size, n_nodes)
+        )  # (batch_size, n_nodes)
+        loc_x = torch.cat([loc, aug_demand.unsqueeze(-1)], dim=-1)  # (batch_size, n_nodes, dimension + 1)
+        loc_x = loc_x.transpose(1, 2)  # (batch_size, dimension + 1, n_nodes)
+        loc_z = self.loc_encoder(loc_x)  # (batch_size, hidden_size, n_nodes) // embeddings for nodes to arrive at
 
         ### Pointer Network
-        rnn_input_x = self.get_rnn_input_x(obs_td)  # (batch_size, 5, n_agents)
+        rnn_input_x = self.get_rnn_input_x(obs_td)  # (batch_size, 2 * dimension + 1, n_agents)
         rnn_input_z = self.rnn_input_encoder(rnn_input_x).transpose(1, 2).unsqueeze(-2)
-        # (batch_size, n_agents, 1, hidden_size)
+        # (batch_size, n_agents, 1, hidden_size) // embeddings for agents to depart from
         action_logit, rnn_hidden = self.ptrnet(rnn_input_z, rnn_last_hidden, att_key=loc_z)
         # (batch_size, n_agents * n_nodes), (batch_size, hidden_size)
 

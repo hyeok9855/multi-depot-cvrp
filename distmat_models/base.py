@@ -29,18 +29,28 @@ class Attention(nn.Module):
         self.v = nn.Parameter(torch.randn((1, 1, hidden_size), requires_grad=True))
         self.W = nn.Parameter(torch.randn((1, hidden_size, query_hidden_size + key_hidden_size), requires_grad=True))
 
-    def forward(self, att_query: torch.Tensor, att_key: torch.Tensor, return_prob=False) -> torch.Tensor:
+        self.bias_mix = nn.Parameter(torch.randn((1, hidden_size, 2), requires_grad=True))
+        self.bias_mix2 = nn.Parameter(torch.randn((1, 1, hidden_size), requires_grad=True))
+
+    def forward(
+        self,
+        att_query: torch.Tensor,
+        att_key: torch.Tensor,
+        return_prob: bool = False,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Args:
             att_query: (batch_size, query_hidden_size, num_queries)
             att_key: (batch_size, key_hidden_size, num_keys)
+            bias: (batch_size, num_queries, num_keys)
         """
         batch_size = att_query.shape[0]
         num_queries, num_keys = att_query.shape[-1], att_key.shape[-1]
 
         att_query = att_query.unsqueeze(3).expand(-1, -1, -1, num_keys)
         att_key = att_key.unsqueeze(2).expand(-1, -1, num_queries, -1)
-        # (batch_size, query/key_hidden_size, num_queries, num_keys) each
+        # (batch_size, query/key_hidden_size, num_queries, num_keys), both
 
         # Concatenate the query and key features
         att_hidden = torch.cat((att_query, att_key), dim=1).flatten(start_dim=2)
@@ -51,6 +61,18 @@ class Attention(nn.Module):
         W = self.W.expand(batch_size, self.hidden_size, -1)
 
         attns = torch.bmm(v, torch.tanh(torch.bmm(W, att_hidden)))  # (batch_size, 1, num_queries * num_keys)
+
+        if bias is not None:
+            bias = bias.unsqueeze(1).flatten(start_dim=2)  # (batch_size, 1, num_queries * num_keys)
+            biased_attns = torch.cat((attns, bias), dim=1)
+            # (batch_size, 2, num_queries * num_keys)
+
+            bias_mix = self.bias_mix.expand(batch_size, -1, -1)
+            bias_mix2 = self.bias_mix2.expand(batch_size, -1, -1)
+
+            biased_attns = torch.bmm(bias_mix, biased_attns)
+            attns = torch.bmm(bias_mix2, biased_attns)
+
         if return_prob:
             attns = F.softmax(attns, dim=-1).squeeze(1)
 

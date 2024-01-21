@@ -12,8 +12,8 @@ from torch.utils.data import DataLoader
 from tensordict import TensorDict
 import torch
 
-from envs import MDCVRPEnv
-from models import Actor, Critic
+from distmat_envs import MDCVRPDISTEnv
+from distmat_models import Actor, Critic
 
 
 NOW = datetime.strftime(datetime.now(), "%y%m%d-%H%M%S")
@@ -75,15 +75,17 @@ class MDCVRPTester:
                 indent=4,
             )
 
-    def setup_test(self) -> tuple[MDCVRPEnv, TensorDict, dict[str, Any]]:
+    def setup_test(self) -> tuple[MDCVRPDISTEnv, TensorDict, dict[str, Any]]:
         """
         Create test environment and make test dataset
         If testset_path is given, env is created based on it
         """
         if self.tester_params["testset_path"] is not None:
-            env, td, env_params = MDCVRPEnv.from_csv(self.tester_params["testset_path"], **self.env_params)
+            env, td, env_params = MDCVRPDISTEnv.from_csv(
+                self.tester_params["testset_path"], self.tester_params["dist_mat_path"], **self.env_params
+            )
         else:
-            env = MDCVRPEnv(**self.env_params)
+            env = MDCVRPDISTEnv(**self.env_params)
             td = env.generate_data(self.tester_params["test_n_samples"], seed=0)
             env_params = self.env_params
         return env, td, env_params
@@ -151,7 +153,9 @@ class MDCVRPTester:
 
 
 if __name__ == "__main__":
-    testset_path = "data/test/N20_M2_D3/example.csv"  # test with testset / None for randomly generated testset
+    # test with testset / None for randomly generated testset
+    testset_path = "data/test/N20_M2_D3/example.csv"
+    dist_mat_path = "data/test/N20_M2_D3/example_distmat.csv"
     exp_name = "random" if testset_path is None else Path(testset_path).stem
 
     env_params = {
@@ -161,8 +165,10 @@ if __name__ == "__main__":
         "dimension": 3,
         "min_loc": 0,
         "max_loc": 1,
+        "dist_perturb_min": 0.5,
+        "dist_perturb_max": 2.0,
         "min_demand": 1,
-        "max_demand": 1,
+        "max_demand": 5,
         "vehicle_capacity": 10,
         ### Env logic params ###
         "one_by_one": False,
@@ -172,7 +178,7 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "model_ckpt_path": "results/N20_M2_D3/train_230917-010958/checkpoints/epoch400.pth",
+        "model_ckpt_path": "distmat_results/N20_M2_D3/240122-055334_debug/checkpoints/best.pth",
     }
 
     tester_params = {
@@ -180,10 +186,11 @@ if __name__ == "__main__":
         "device": "cuda",  # "cpu" or "cuda"
         ### Testing ###
         "testset_path": testset_path,  # None for randomly generated testset
+        "dist_mat_path": dist_mat_path,  # None for randomly generated dist_mat
         "test_n_samples": 1,  # Only used when testset_path is None
         "batch_size": 256,
         ### Logging and Saving ###
-        "result_dir": "test_results",
+        "result_dir": "distmat_test_results",
         "exp_name": exp_name,
     }
 

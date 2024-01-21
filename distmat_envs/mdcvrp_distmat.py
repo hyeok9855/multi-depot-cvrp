@@ -1,5 +1,5 @@
 """
-Multi-depot CVRP environment
+Enviroment for Multi-depot CVRP with both coordinates and distance matrix as input
 """
 from pathlib import Path
 from typing import Any, cast
@@ -10,15 +10,16 @@ import numpy as np
 import pandas as pd
 import torch
 
-from envs.utils import gather_by_index
-from envs.render import MDCVRPVisualizer
+from distmat_envs.utils import gather_by_index
+from distmat_envs.render import MDCVRPVisualizer
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-class MDCVRPEnv:
+class MDCVRPDISTEnv:
     """
-    Environment for Multi-Depot Capacitated Vehicle Routing Problem
+    Enviroment for Multi-depot Capacitated Vehicle Routing Problem
+    with both coordinates and distance matrix as input
 
     Args:
         n_custs: Number of customers
@@ -26,6 +27,8 @@ class MDCVRPEnv:
         dimension: Dimension of the location of the nodes
         min_loc: Minimum value for the location of the nodes
         max_loc: Maximum value for the location of the nodes
+        dist_perturb_min: Minimum value for the perturbation of the distance matrix
+        dist_perturb_max: Maximum value for the perturbation of the distance matrix
         min_demand: Minimum value for the demand of the customers
         max_demand: Maximum value for the demand of the customers
         vehicle_capacity: Capacity of the vehicles
@@ -36,7 +39,7 @@ class MDCVRPEnv:
         intermediate_reward: Whether to give intermediate reward
     """
 
-    name = "mdcvrp"
+    name = "mdcvrpdist"
     # Capacities of the vehicles at each problem size
     CAPACITIES = {10: 20.0, 20: 30.0, 50: 40.0, 100: 50.0}
 
@@ -47,6 +50,8 @@ class MDCVRPEnv:
         dimension: int = 2,
         min_loc: float = 0,
         max_loc: float = 1,
+        dist_perturb_min: float | None = 0.5,
+        dist_perturb_max: float | None = 2.0,
         min_demand: int = 1,
         max_demand: int = 9,
         vehicle_capacity: float | None = None,
@@ -62,6 +67,8 @@ class MDCVRPEnv:
         self.dimension = dimension
         self.min_loc = min_loc
         self.max_loc = max_loc
+        self.dist_perturb_min = dist_perturb_min
+        self.dist_perturb_max = dist_perturb_max
         self.min_demand = min_demand
         self.max_demand = max_demand
         self.vehicle_capacity = self.CAPACITIES.get(n_custs, vehicle_capacity)
@@ -97,9 +104,11 @@ class MDCVRPEnv:
             td = td.unsqueeze(0).to_tensordict()
         # Use type cast to avoid type error
         loc = cast(torch.FloatTensor, td["loc"])  # (batch_size, n_agents + n_custs, dimension)
+        dist_mat = cast(torch.FloatTensor, td["dist_mat"])  # (batch_size, n_agents + n_custs, n_agents + n_custs)
         demand = cast(torch.FloatTensor, td["demand"])  # (batch_size, n_custs)
         agent_loc = cast(torch.FloatTensor, td["agent_loc"])  # (batch_size, n_agents, dimension)
         agent_loc_idx = cast(torch.LongTensor, td["agent_loc_idx"])  # (batch_size, n_agents)
+        agent_dist_mat = cast(torch.FloatTensor, td["agent_dist_mat"])  # (batch_size, n_agents, n_agents + n_custs)
         remaining_capacity = cast(torch.FloatTensor, td["remaining_capacity"])  # (batch_size, n_agents)
         cum_length = cast(torch.FloatTensor, td["cum_length"])  # (batch_size, n_agents)
         return_count = cast(torch.LongTensor, td["return_count"])  # (batch_size, n_agents)
@@ -114,19 +123,31 @@ class MDCVRPEnv:
         at_cust = torch.where(~depot_bool)[0]
         selected_cust = selected_node[at_cust] - self.n_agents  # (n_at_cust, 1)
 
-        #### get the new location of the agent
-        # cache last location of agents for the cum_length calculation
-        agent_loc_before = agent_loc  # (batch_size, n_agents, dimension)
+        ### get the new location of the agent
         # get the new agent_loc
         loc_src = gather_by_index(loc, selected_node, dim=1, squeeze=False)  # (batch_size, 1, dimension)
         agent_loc = torch.scatter(  # scatter returns a new tensor
-            input=agent_loc_before,
+            input=agent_loc,
             index=selected_agent.unsqueeze(-1).expand((-1, 1, self.dimension)),
             dim=1,
             src=loc_src,
         )
 
+        ### get the new distance matrix starting from the agent
+        # cache the distance matrix before for the cum_length calculation
+        agent_dist_mat_before = agent_dist_mat
+        # get the new agent_dist_mat
+        dist_mat_src = gather_by_index(dist_mat, selected_node, dim=1, squeeze=False)
+        # (batch_size, 1, n_agents + n_custs)
+        agent_dist_mat = torch.scatter(
+            input=agent_dist_mat_before,
+            index=selected_agent.unsqueeze(-1).expand((-1, 1, self.n_agents + self.n_custs)),
+            dim=1,
+            src=dist_mat_src,
+        )  # (batch_size, n_agents, n_agents + n_custs)
+
         ### get the new node index of the agent
+        # get the new agent_loc_idx
         agent_loc_idx = torch.scatter(input=agent_loc_idx, index=selected_agent, dim=1, src=selected_node)
 
         ### get the new remaining capacity of the agent
@@ -148,10 +169,14 @@ class MDCVRPEnv:
         demand[at_cust] = torch.scatter(input=demand[at_cust], index=selected_cust, dim=1, value=0.0)
 
         ### update the cumulative length of the tour
-        # get the distance between the agent location before and after
-        dist = torch.norm(agent_loc_before - agent_loc, dim=-1)  # (batch_size, n_agents)
+        # get the distance between the agent location before and after, using the agent_dist_mat
+        dist = gather_by_index(
+            gather_by_index(agent_dist_mat_before, selected_agent, dim=1, squeeze=False).squeeze(1),
+            selected_node,
+            dim=1,
+        )  # (batch_size, 1)
         # add the distance to the cumulative length
-        cum_length = cum_length + dist  # (batch_size, n_agents)
+        cum_length = torch.scatter(input=cum_length, index=selected_agent, dim=1, src=cum_length + dist.unsqueeze(-1))
 
         ### update the return count of the agent
         # if the agent is at the depot, increment the return count
@@ -176,9 +201,13 @@ class MDCVRPEnv:
         td_step = TensorDict(
             {
                 "loc": loc,
+                "dist_mat": dist_mat,
+                "dist_u": td["dist_u"],
+                "dist_v": td["dist_v"],
                 "demand": demand,
                 "agent_loc": agent_loc,
                 "agent_loc_idx": agent_loc_idx,
+                "agent_dist_mat": agent_dist_mat,
                 "remaining_capacity": remaining_capacity,
                 "cum_length": cum_length,
                 "return_count": return_count,
@@ -268,10 +297,7 @@ class MDCVRPEnv:
         # If some customer is not visited, the sum of demands of unvisited customers is subtracted from the reward
         # This situation can happen only when no_restart is enabled
         if self.no_restart:
-            import pdb
-
-            pdb.set_trace()
-            reward = reward - (torch.sum(demand, dim=1, keepdim=True))
+            reward = reward - torch.sum(demand, dim=1, keepdim=True) * self.vehicle_capacity  # undo normalization
 
         # If imbalance penalty is enabled, penalize the imbalance of the tour length
         if self.imbalance_penalty:
@@ -282,6 +308,10 @@ class MDCVRPEnv:
         return reward
 
     def generate_data(self, batch_size: int, seed: int | None = None) -> TensorDict:
+        assert (
+            self.dist_perturb_min is not None and self.dist_perturb_max is not None
+        ), "dist_perturb_min and dist_perturb_max must be specified when generating data. "
+
         # Use numpy to generate the data as it is easier to set the random seed
         np.random.seed(seed)
 
@@ -289,15 +319,28 @@ class MDCVRPEnv:
         loc = np.random.uniform(self.min_loc, self.max_loc, (batch_size, self.n_agents + self.n_custs, self.dimension))
         loc = torch.from_numpy(loc).float().to(self.device)
 
+        # distance matrix
+        euc_dist = torch.norm(loc.unsqueeze(2) - loc.unsqueeze(1), dim=-1)
+        # add noise to the distance matrix
+        # each distance is multiplied by a random number between [dist_perturb_min, dist_perturb_max]
+        dist_mat = euc_dist * (
+            self.dist_perturb_min + (self.dist_perturb_max - self.dist_perturb_min) * torch.rand_like(euc_dist)
+        )
+        # SVD decomposition to get a row/column vectors
+        dist_u, _, dist_v = torch.svd(dist_mat)  # rank == (n_agents + n_custs)
+
         # demand for each customer, Note that the demand is normalized by the vehicle capacity
         demand = np.random.randint(self.min_demand, self.max_demand + 1, (batch_size, self.n_custs))
         demand = torch.from_numpy(demand).float().to(self.device) / self.vehicle_capacity
 
-        # locations of the depots
+        # current location of the agents
         agent_loc = loc[:, : self.n_agents, :].clone()
 
-        # index of the agents
+        # node index of the agents
         agent_loc_idx = torch.arange(self.n_agents, dtype=torch.int64).repeat(batch_size, 1)
+
+        # distance matrix starting from the agents
+        agent_dist_mat = dist_mat[:, : self.n_agents, :].clone()
 
         # capacity for each agent (1.0 because we normalized the demand by the vehicle capacity)
         remaining_capacity = torch.full((batch_size, self.n_agents), 1.0, dtype=torch.float32)
@@ -315,9 +358,13 @@ class MDCVRPEnv:
         return TensorDict(
             {
                 "loc": loc,  # (batch_size, n_agents + n_custs, dimension)
+                "dist_mat": dist_mat,  # (batch_size, n_agents + n_custs, n_agents + n_custs)
+                "dist_u": dist_u,  # (batch_size, n_agents + n_custs, rank=(n_agents + n_custs))
+                "dist_v": dist_v,  # (batch_size, n_agents + n_custs, rank=(n_agents + n_custs))
                 "demand": demand,  # (batch_size, n_custs)
                 "agent_loc": agent_loc,  # (batch_size, n_agents, dimension)
                 "agent_loc_idx": agent_loc_idx,  # (batch_size, n_agents)
+                "agent_dist_mat": agent_dist_mat,  # (batch_size, n_agents, n_agents + n_custs)
                 "remaining_capacity": remaining_capacity,  # (batch_size, n_agents)
                 "cum_length": cum_length,  # (batch_size, n_agents)
                 "return_count": return_count,  # (batch_size, n_agents)
@@ -328,13 +375,19 @@ class MDCVRPEnv:
         )
 
     @classmethod
-    def from_csv(cls, testset_path: Path | str, **kwargs) -> tuple["MDCVRPEnv", TensorDict, dict[str, Any]]:
+    def from_csv(
+        cls, testset_path: Path | str, dist_mat_path: Path | str, **kwargs
+    ) -> tuple["MDCVRPDISTEnv", TensorDict, dict[str, Any]]:
         """Generate the environment from a csv file"""
         # Note that in this case, the batch_size must be 1 (TODO: support batch_size > 1)
         df = pd.read_csv(testset_path)
         custs = df[df["type"] == "cust"]
         agents = df[df["type"] == "agent"]
         dimension = 3 if "z" in df.columns else 2
+
+        # Read distance matrix from csv into a numpy array
+        dist_mat_np = np.loadtxt(dist_mat_path, delimiter=",", dtype=np.float32)
+        # (n_agents + n_custs, n_agents + n_custs)
 
         n_custs = custs.shape[0]
         n_agents = agents.shape[0]
@@ -355,17 +408,18 @@ class MDCVRPEnv:
                 "dimension": dimension,
                 "min_loc": min_loc,
                 "max_loc": max_loc,
+                "dist_delta": None,  # dist_delta is not used
                 "min_demand": min_demand,
                 "max_demand": max_demand,
                 "vehicle_capacity": vehicle_capacity,
             }
         )
         env = cls(**kwargs)
-        td = env.generate_td_from_data(df=df)
+        td = env.generate_td_from_data(df=df, dist_mat_np=dist_mat_np)
 
         return env, td, kwargs
 
-    def generate_td_from_data(self, df: pd.DataFrame) -> TensorDict:
+    def generate_td_from_data(self, df: pd.DataFrame, dist_mat_np: np.ndarray) -> TensorDict:
         """Load the data from a user-defined data"""
         # Note that in this case, the batch_size must be 1 (TODO: support batch_size > 1)
 
@@ -375,6 +429,11 @@ class MDCVRPEnv:
             loc = torch.FloatTensor(df[["x", "y"]].values).unsqueeze(0)
         else:
             loc = torch.FloatTensor(df[["x", "y", "z"]].values).unsqueeze(0)
+
+        dist_mat = torch.from_numpy(dist_mat_np).unsqueeze(0)
+        agent_dist_mat = dist_mat[:, : self.n_agents, :].clone()
+        # SVD decomposition to get a row/column vectors
+        dist_u, _, dist_v = torch.svd(dist_mat)  # rank == (n_agents + n_custs)
 
         demand = torch.FloatTensor(df.loc[df["type"] == "cust", "value"].values).unsqueeze(0) / self.vehicle_capacity
         agent_loc = loc[:, : self.n_agents, :].clone()
@@ -388,9 +447,13 @@ class MDCVRPEnv:
         return TensorDict(
             {
                 "loc": loc,  # (1, n_agents + n_custs, dimension)
+                "dist_mat": dist_mat,  # (1, n_agents + n_custs, n_agents + n_custs)
+                "dist_u": dist_u,  # (1, n_agents + n_custs, rank=(n_agents + n_custs))
+                "dist_v": dist_v,  # (1, n_agents + n_custs, rank=(n_agents + n_custs))
                 "demand": demand,  # (1, n_custs)
                 "agent_loc": agent_loc,  # (1, n_agents, dimension)
                 "agent_loc_idx": agent_loc_idx,  # (1, n_agents)
+                "agent_dist_mat": agent_dist_mat,  # (1, n_agents, n_agents + n_custs)
                 "remaining_capacity": remaining_capacity,  # (1, n_agents)
                 "cum_length": cum_length,  # (1, n_agents)
                 "return_count": return_count,  # (1, n_agents)
@@ -428,7 +491,7 @@ class MDCVRPEnv:
 
 if __name__ == "__main__":
     batch_size = 50
-    env = MDCVRPEnv(n_custs=1000, n_agents=20, dimension=2, device="cpu", vehicle_capacity=100.0)
+    env = MDCVRPDISTEnv(n_custs=5, n_agents=2, dimension=2, device="cpu", vehicle_capacity=100.0)
     td = env.reset(batch_size=batch_size)
 
     actions = torch.empty((batch_size, 0, 2), dtype=torch.int64)

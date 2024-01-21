@@ -167,6 +167,16 @@ class MDCVRPVisualizer:
                     alpha=0.5,
                 )
 
+                # annotate dist_mat
+                ax.text(
+                    (from_loc[0] + to_loc[0]) / 2 + 0.01 * (1 if from_loc[0] < to_loc[0] else -1),
+                    (from_loc[1] + to_loc[1]) / 2 + 0.01 * (1 if from_loc[0] < to_loc[0] else -1),
+                    (from_loc[2] + to_loc[2]) / 2 + 0.01 * (1 if from_loc[0] < to_loc[0] else -1),
+                    f"{self.td['dist_mat'][agent_loc_idx_before[agent_idx], loc_idx]:.2f}",
+                    color="k",
+                    fontsize=10,
+                )
+
             agent_loc_idx_before[agent_idx] = loc_idx
 
         ax.set_xlim(-0.05, 1.05)
