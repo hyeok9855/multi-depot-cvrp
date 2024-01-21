@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from distmat_models.base import Encoder
-from distmat_envs import MDCVRPDISTEnv
+from distmat_envs import MDCVRPEnv
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,7 +19,7 @@ class Critic(nn.Module):
     the encoder + decoder, and returns an estimate of complexity
     """
 
-    def __init__(self, env: MDCVRPDISTEnv, loc_encoder_params: dict[str, Any], dist_encoder_params: dict[str, Any]):
+    def __init__(self, env: MDCVRPEnv, loc_encoder_params: dict[str, Any], dist_encoder_params: dict[str, Any]):
         super().__init__()
 
         self.env = env

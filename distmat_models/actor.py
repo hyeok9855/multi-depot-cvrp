@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from tensordict import TensorDict
 
-from distmat_envs import MDCVRPDISTEnv
+from distmat_envs import MDCVRPEnv
 from distmat_models.base import Encoder
 from distmat_models.pointer import PtrNet
 
@@ -25,7 +25,7 @@ class Actor(nn.Module):
 
     def __init__(
         self,
-        env: MDCVRPDISTEnv,
+        env: MDCVRPEnv,
         loc_encoder_params: dict[str, Any],
         dist_encoder_params: dict[str, Any],
         rnn_input_encoder_params: dict[str, Any],

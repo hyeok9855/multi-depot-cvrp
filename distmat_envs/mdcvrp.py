@@ -16,7 +16,7 @@ from distmat_envs.render import MDCVRPVisualizer
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-class MDCVRPDISTEnv:
+class MDCVRPEnv:
     """
     Enviroment for Multi-depot Capacitated Vehicle Routing Problem
     with both coordinates and distance matrix as input
@@ -377,7 +377,7 @@ class MDCVRPDISTEnv:
     @classmethod
     def from_csv(
         cls, testset_path: Path | str, dist_mat_path: Path | str, **kwargs
-    ) -> tuple["MDCVRPDISTEnv", TensorDict, dict[str, Any]]:
+    ) -> tuple["MDCVRPEnv", TensorDict, dict[str, Any]]:
         """Generate the environment from a csv file"""
         # Note that in this case, the batch_size must be 1 (TODO: support batch_size > 1)
         df = pd.read_csv(testset_path)
@@ -491,7 +491,7 @@ class MDCVRPDISTEnv:
 
 if __name__ == "__main__":
     batch_size = 50
-    env = MDCVRPDISTEnv(n_custs=5, n_agents=2, dimension=2, device="cpu", vehicle_capacity=100.0)
+    env = MDCVRPEnv(n_custs=5, n_agents=2, dimension=2, device="cpu", vehicle_capacity=100.0)
     td = env.reset(batch_size=batch_size)
 
     actions = torch.empty((batch_size, 0, 2), dtype=torch.int64)

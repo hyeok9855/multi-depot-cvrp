@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tensordict import TensorDict
 import torch
 
-from distmat_envs import MDCVRPDISTEnv
+from distmat_envs import MDCVRPEnv
 from distmat_models import Actor, Critic
 
 
@@ -75,17 +75,17 @@ class MDCVRPTester:
                 indent=4,
             )
 
-    def setup_test(self) -> tuple[MDCVRPDISTEnv, TensorDict, dict[str, Any]]:
+    def setup_test(self) -> tuple[MDCVRPEnv, TensorDict, dict[str, Any]]:
         """
         Create test environment and make test dataset
         If testset_path is given, env is created based on it
         """
         if self.tester_params["testset_path"] is not None:
-            env, td, env_params = MDCVRPDISTEnv.from_csv(
+            env, td, env_params = MDCVRPEnv.from_csv(
                 self.tester_params["testset_path"], self.tester_params["dist_mat_path"], **self.env_params
             )
         else:
-            env = MDCVRPDISTEnv(**self.env_params)
+            env = MDCVRPEnv(**self.env_params)
             td = env.generate_data(self.tester_params["test_n_samples"], seed=0)
             env_params = self.env_params
         return env, td, env_params

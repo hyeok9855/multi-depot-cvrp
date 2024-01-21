@@ -16,7 +16,7 @@ from tqdm import tqdm
 import torch
 import numpy as np
 
-from distmat_envs import MDCVRPDISTEnv
+from distmat_envs import MDCVRPEnv
 from models import Actor, Critic
 
 
@@ -42,7 +42,7 @@ class MDCVRPTrainer:
         self.model_params["critic_params"]["loc_encoder_params"].update({"input_size": d + 1})
 
         ### Env ###
-        self.env = MDCVRPDISTEnv(**self.env_params)
+        self.env = MDCVRPEnv(**self.env_params)
 
         ### Model ###
         self.actor = Actor(env=self.env, **model_params["actor_params"]).to(self.device)  # type: ignore

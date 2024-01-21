@@ -1,1 +1,1 @@
-from .mdcvrp_distmat import MDCVRPDISTEnv
+from .mdcvrp import MDCVRPEnv

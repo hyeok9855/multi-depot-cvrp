@@ -16,7 +16,7 @@ from tqdm import tqdm
 import torch
 import numpy as np
 
-from distmat_envs import MDCVRPDISTEnv
+from distmat_envs import MDCVRPEnv
 from distmat_models import Actor, Critic
 
 
@@ -45,7 +45,7 @@ class MDCVRPTrainer:
         )
 
         ### Env ###
-        self.env = MDCVRPDISTEnv(**self.env_params)
+        self.env = MDCVRPEnv(**self.env_params)
 
         ### Model ###
         self.actor = Actor(env=self.env, **model_params["actor_params"]).to(self.device)
@@ -259,7 +259,7 @@ class MDCVRPTrainer:
 
 if __name__ == "__main__":
     env_params = {
-        "n_custs": 20,
+        "n_custs": 100,
         "n_agents": 2,
         "dimension": 3,
         "min_loc": 0,
