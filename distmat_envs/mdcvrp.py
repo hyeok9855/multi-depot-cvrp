@@ -50,6 +50,8 @@ class MDCVRPEnv:
         dimension: int = 2,
         min_loc: float = 0,
         max_loc: float = 1,
+        dist_mat_min: np.ndarray | None = None,
+        dist_mat_max: np.ndarray | None = None,
         dist_perturb_min: float | None = 0.5,
         dist_perturb_max: float | None = 2.0,
         min_demand: int = 1,
@@ -67,8 +69,15 @@ class MDCVRPEnv:
         self.dimension = dimension
         self.min_loc = min_loc
         self.max_loc = max_loc
+        self.dist_mat_min = dist_mat_min
+        self.dist_mat_max = dist_mat_max
         self.dist_perturb_min = dist_perturb_min
         self.dist_perturb_max = dist_perturb_max
+
+        assert (dist_mat_min is not None and dist_mat_max is not None) or (
+            dist_perturb_min is not None and dist_perturb_max is not None
+        ), "dist_mat_min and dist_mat_max or dist_perturb_min and dist_perturb_max must be specified."
+
         self.min_demand = min_demand
         self.max_demand = max_demand
         self.vehicle_capacity = self.CAPACITIES.get(n_custs, vehicle_capacity)
@@ -308,10 +317,6 @@ class MDCVRPEnv:
         return reward
 
     def generate_data(self, batch_size: int, seed: int | None = None) -> TensorDict:
-        assert (
-            self.dist_perturb_min is not None and self.dist_perturb_max is not None
-        ), "dist_perturb_min and dist_perturb_max must be specified when generating data. "
-
         # Use numpy to generate the data as it is easier to set the random seed
         np.random.seed(seed)
 
@@ -323,9 +328,22 @@ class MDCVRPEnv:
         euc_dist = torch.norm(loc.unsqueeze(2) - loc.unsqueeze(1), dim=-1)
         # add noise to the distance matrix
         # each distance is multiplied by a random number between [dist_perturb_min, dist_perturb_max]
-        dist_mat = euc_dist * (
-            self.dist_perturb_min + (self.dist_perturb_max - self.dist_perturb_min) * torch.rand_like(euc_dist)
-        )
+        if self.dist_mat_min is not None and self.dist_mat_max is not None:
+            # `dist_mat_min` and `dist_mat_max` have higher priority
+            dist_mat = torch.from_numpy(self.dist_mat_min + (self.dist_mat_max - self.dist_mat_min)).float().to(
+                self.device
+            ) * torch.rand_like(euc_dist)
+
+        elif self.dist_perturb_min is not None and self.dist_perturb_max is not None:
+            dist_mat = euc_dist * (
+                self.dist_perturb_min + (self.dist_perturb_max - self.dist_perturb_min) * torch.rand_like(euc_dist)
+            )
+
+        else:
+            raise ValueError(
+                "dist_mat_min and dist_mat_max or dist_perturb_min and dist_perturb_max must be specified."
+            )
+
         # SVD decomposition to get a row/column vectors
         dist_u, _, dist_v = torch.svd(dist_mat)  # rank == (n_agents + n_custs)
 
@@ -491,7 +509,28 @@ class MDCVRPEnv:
 
 if __name__ == "__main__":
     batch_size = 50
-    env = MDCVRPEnv(n_custs=5, n_agents=2, dimension=2, device="cpu", vehicle_capacity=100.0)
+
+    n_custs = 20
+    n_agents = 2
+    n_nodes = n_custs + n_agents
+
+    rand_mat_min = np.random.randint(low=1, high=5, size=(n_nodes, n_nodes))
+    rand_mat_min[np.arange(n_nodes), np.arange(n_nodes)] = 0
+    print(rand_mat_min)
+
+    rand_mat_max = rand_mat_min + np.random.randint(low=0, high=3, size=(n_nodes, n_nodes))
+    rand_mat_max[np.arange(n_nodes), np.arange(n_nodes)] = 0
+    print(rand_mat_max)
+
+    env = MDCVRPEnv(
+        n_custs=n_custs,
+        n_agents=n_agents,
+        dimension=2,
+        device="cpu",
+        vehicle_capacity=20.0,
+        dist_mat_min=rand_mat_min,
+        dist_mat_max=rand_mat_max,
+    )
     td = env.reset(batch_size=batch_size)
 
     actions = torch.empty((batch_size, 0, 2), dtype=torch.int64)

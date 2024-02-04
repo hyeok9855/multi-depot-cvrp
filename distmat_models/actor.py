@@ -159,7 +159,7 @@ class Actor(nn.Module):
         # Agent embeddings
         agent_x = self.get_agent_x(obs_td)  # (batch_size, 2 * dimension + 1, n_agents)
         agent_z = self.agent_encoder(agent_x)
-        # (batch_size, n_agents, 1, hidden_size) // embeddings for agents to depart from
+        # (batch_size, hidden_size, n_agents) // embeddings for agents to depart from
 
         # MATRIX: distance embeddings
         depart_x, arrive_x = self.get_distance_x(obs_td)

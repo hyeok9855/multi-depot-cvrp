@@ -86,6 +86,17 @@ class MDCVRPTrainer:
             else self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"] + 1
         )
 
+        # save dist_mat_min and dist_mat_max separately
+        if self.env_params["dist_mat_min"] is not None and self.env_params["dist_mat_max"] is not None:
+            np.savetxt(
+                self.result_dir / "dist_mat_min.csv", self.env_params["dist_mat_min"], delimiter=",", fmt="%.3f"
+            )
+            np.savetxt(
+                self.result_dir / "dist_mat_max.csv", self.env_params["dist_mat_max"], delimiter=",", fmt="%.3f"
+            )
+            self.env_params.pop("dist_mat_min")
+            self.env_params.pop("dist_mat_max")
+
         # save params
         with open(self.result_dir / "params.json", "w") as f:
             json.dump(
@@ -258,14 +269,28 @@ class MDCVRPTrainer:
 
 
 if __name__ == "__main__":
+    n_custs = 20
+    n_agents = 2
+    n_nodes = n_custs + n_agents
+
+    rand_mat_min = np.random.randint(low=1, high=5, size=(n_nodes, n_nodes))
+    rand_mat_min[np.arange(n_nodes), np.arange(n_nodes)] = 0
+    print(rand_mat_min)
+
+    rand_mat_max = rand_mat_min + np.random.randint(low=0, high=3, size=(n_nodes, n_nodes))
+    rand_mat_max[np.arange(n_nodes), np.arange(n_nodes)] = 0
+    print(rand_mat_max)
+
     env_params = {
-        "n_custs": 100,
-        "n_agents": 2,
+        "n_custs": n_custs,
+        "n_agents": n_agents,
         "dimension": 3,
         "min_loc": 0,
         "max_loc": 1,
-        "dist_perturb_min": 0.5,
-        "dist_perturb_max": 2.0,
+        "dist_mat_min": rand_mat_min,
+        "dist_mat_max": rand_mat_max,
+        # "dist_perturb_min": 0.5,
+        # "dist_perturb_max": 2.0,
         "min_demand": 1,
         "max_demand": 5,
         "vehicle_capacity": 10,
