@@ -106,18 +106,18 @@ class Actor(nn.Module):
         return node_x
 
     def get_agent_x(self, obs_td: TensorDict) -> torch.Tensor:
-        rnn_input_loc = cast(torch.FloatTensor, obs_td["agent_loc"])  # MATRIX: departure embedding
+        agent_loc = cast(torch.FloatTensor, obs_td["agent_loc"])  # MATRIX: departure embedding
         # (batch_size, n_agents, dimension)
-        rnn_input_depot = cast(torch.FloatTensor, obs_td["loc"][:, : self.env.n_agents, :])  # MATRIX: arrive embedding
+        depot_loc = cast(torch.FloatTensor, obs_td["loc"][:, : self.env.n_agents, :])  # MATRIX: arrive embedding
         # (batch_size, n_agents, dimension)
-        rnn_input_cap = cast(torch.FloatTensor, obs_td["remaining_capacity"].unsqueeze(-1))
+        capacity = cast(torch.FloatTensor, obs_td["remaining_capacity"].unsqueeze(-1))
         # (batch_size, n_agents, 1)
-        rnn_input_x = torch.cat([rnn_input_loc, rnn_input_depot, rnn_input_cap], dim=-1)
+        agent_x = torch.cat([agent_loc, depot_loc, capacity], dim=-1)
         # (batch_size, n_agents, 2 * dimension + 1)
-        rnn_input_x = rnn_input_x.transpose(1, 2)  # (batch_size, 2 * dimension + 1, n_agents)
+        agent_x = agent_x.transpose(1, 2)  # (batch_size, 2 * dimension + 1, n_agents)
 
-        assert rnn_input_x.shape[1] == self.agent_encoder.input_size
-        return rnn_input_x
+        assert agent_x.shape[1] == self.agent_encoder.input_size
+        return agent_x
 
     def get_distance_x(self, obs_td: TensorDict) -> tuple[torch.Tensor, torch.Tensor]:
         dist_u = cast(torch.FloatTensor, obs_td["dist_u"])  # (batch_size, n_agents + n_nodes, n_agents + n_nodes)
