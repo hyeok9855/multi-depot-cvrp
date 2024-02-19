@@ -1,6 +1,7 @@
 """
 Enviroment for Multi-depot CVRP with both coordinates and distance matrix as input
 """
+
 from pathlib import Path
 from typing import Any, cast
 import warnings
@@ -59,7 +60,7 @@ class MDCVRPEnv:
         vehicle_capacity: float | None = None,
         device: str = "cpu",
         one_by_one: bool = False,
-        no_restart: bool = False,
+        no_restart: bool = True,
         imbalance_penalty: bool = True,
         intermediate_reward: bool = False,
         **kwargs,
@@ -73,11 +74,6 @@ class MDCVRPEnv:
         self.dist_mat_max = dist_mat_max
         self.dist_perturb_min = dist_perturb_min
         self.dist_perturb_max = dist_perturb_max
-
-        assert (dist_mat_min is not None and dist_mat_max is not None) or (
-            dist_perturb_min is not None and dist_perturb_max is not None
-        ), "dist_mat_min and dist_mat_max or dist_perturb_min and dist_perturb_max must be specified."
-
         self.min_demand = min_demand
         self.max_demand = max_demand
         self.vehicle_capacity = self.CAPACITIES.get(n_custs, vehicle_capacity)
@@ -183,9 +179,15 @@ class MDCVRPEnv:
             gather_by_index(agent_dist_mat_before, selected_agent, dim=1, squeeze=False).squeeze(1),
             selected_node,
             dim=1,
+            squeeze=False,
         )  # (batch_size, 1)
         # add the distance to the cumulative length
-        cum_length = torch.scatter(input=cum_length, index=selected_agent, dim=1, src=cum_length + dist.unsqueeze(-1))
+        cum_length = torch.scatter(
+            input=cum_length,
+            index=selected_agent,
+            dim=1,
+            src=gather_by_index(cum_length, selected_agent, dim=1, squeeze=False) + dist,
+        )
 
         ### update the return count of the agent
         # if the agent is at the depot, increment the return count

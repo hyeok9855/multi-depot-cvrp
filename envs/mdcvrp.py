@@ -1,6 +1,7 @@
 """
 Multi-depot CVRP environment
 """
+
 from pathlib import Path
 from typing import Any, cast
 import warnings
@@ -52,7 +53,7 @@ class MDCVRPEnv:
         vehicle_capacity: float | None = None,
         device: str = "cpu",
         one_by_one: bool = False,
-        no_restart: bool = False,
+        no_restart: bool = True,
         imbalance_penalty: bool = True,
         intermediate_reward: bool = False,
         **kwargs,

@@ -1,6 +1,7 @@
 """
 Trainer for MD-CVRP
 """
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -205,7 +206,7 @@ class MDCVRPTrainer:
         if self.trainer_params["fix_valid_dataset"]:
             if epoch == 1:
                 self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"], seed=0)
-            valid_dataset = self.valid_dataset
+            valid_dataset = self.valid_dataset.clone()
         else:
             valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
 

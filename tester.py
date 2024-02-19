@@ -1,6 +1,7 @@
 """
 Tester for MD-CVRP
 """
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -151,7 +152,7 @@ class MDCVRPTester:
 
 
 if __name__ == "__main__":
-    testset_path = "data/test/N20_M2_D3/example.csv"  # test with testset / None for randomly generated testset
+    testset_path = "data/N20_M3_D3/nodes.csv"  # test with testset / None for randomly generated testset
     exp_name = "random" if testset_path is None else Path(testset_path).stem
 
     env_params = {
