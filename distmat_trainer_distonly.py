@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 import json
 import logging
+import random
 import sys
 
 from tensorboard_logger import Logger as TbLogger
@@ -14,9 +15,10 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torch
+import numpy as np
 
-from envs import MDCVRPEnv
-from models import Actor, Critic
+from distmat_envs import MDCVRPEnv
+from distmat_models import ActorDistOnly, CriticDistOnly
 
 
 NOW = datetime.strftime(datetime.now(), "%y%m%d-%H%M%S")
@@ -33,19 +35,21 @@ class MDCVRPTrainer:
 
         ### update common params ###
         self.env_params.update({"device": self.trainer_params["device"]})
-        d: int = self.env_params["dimension"]
+        d: int = 1
         self.device = torch.device(self.trainer_params["device"])
         # update input_size params of models
-        self.model_params["actor_params"]["loc_encoder_params"].update({"input_size": d + 1})
-        self.model_params["actor_params"]["rnn_input_encoder_params"].update({"input_size": 2 * d + 1})
-        self.model_params["critic_params"]["loc_encoder_params"].update({"input_size": d + 1})
+        self.model_params["actor_params"]["node_encoder_params"].update({"input_size": d + 1})
+        self.model_params["actor_params"]["agent_encoder_params"].update({"input_size": 1})
+        self.model_params["critic_params"]["dist_encoder_params"].update(
+            {"input_size": self.env_params["n_custs"] + self.env_params["n_agents"]}
+        )
 
         ### Env ###
         self.env = MDCVRPEnv(**self.env_params)
 
         ### Model ###
-        self.actor = Actor(env=self.env, **model_params["actor_params"]).to(self.device)
-        self.critic = Critic(env=self.env, **model_params["critic_params"]).to(self.device)
+        self.actor = ActorDistOnly(env=self.env, **model_params["actor_params"]).to(self.device)
+        self.critic = CriticDistOnly(env=self.env, **model_params["critic_params"]).to(self.device)
         self.actor_optimizer = Adam(self.actor.parameters(), **model_params["actor_optimizer"])
         self.critic_optimizer = Adam(self.critic.parameters(), **model_params["critic_optimizer"])
 
@@ -81,6 +85,17 @@ class MDCVRPTrainer:
             if self.trainer_params["train_n_samples"] % self.trainer_params["batch_size"] == 0
             else self.trainer_params["train_n_samples"] // self.trainer_params["batch_size"] + 1
         )
+
+        # save dist_mat_min and dist_mat_max separately
+        if self.env_params["dist_mat_min"] is not None and self.env_params["dist_mat_max"] is not None:
+            np.savetxt(
+                self.result_dir / "dist_mat_min.csv", self.env_params["dist_mat_min"], delimiter=",", fmt="%.3f"
+            )
+            np.savetxt(
+                self.result_dir / "dist_mat_max.csv", self.env_params["dist_mat_max"], delimiter=",", fmt="%.3f"
+            )
+            self.env_params.pop("dist_mat_min")
+            self.env_params.pop("dist_mat_max")
 
         # save params
         with open(self.result_dir / "params.json", "w") as f:
@@ -190,7 +205,7 @@ class MDCVRPTrainer:
         if self.trainer_params["fix_valid_dataset"]:
             if epoch == 1:
                 self.valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"], seed=0)
-            valid_dataset = self.valid_dataset
+            valid_dataset = self.valid_dataset.clone()
         else:
             valid_dataset = self.env.generate_data(self.trainer_params["valid_n_samples"])
 
@@ -254,29 +269,41 @@ class MDCVRPTrainer:
 
 
 if __name__ == "__main__":
+    n_custs = 20
+    n_agents = 2
+    n_nodes = n_custs + n_agents
+    dist_max = 10
+
+    dist_mat_min = np.zeros((n_nodes, n_nodes))
+    dist_mat_max = np.ones((n_nodes, n_nodes)) * dist_max
+    dist_mat_max[np.arange(n_nodes), np.arange(n_nodes)] = 0
+
     env_params = {
-        "n_custs": 20,
-        "n_agents": 2,
-        "dimension": 3,
-        "min_loc": 0,
-        "max_loc": 1,
+        "n_custs": n_custs,
+        "n_agents": n_agents,
+        "dimension": 2,  # not used for training / inference
+        "min_loc": 0,  # not used for training / inference
+        "max_loc": 1,  # not used for training / inference
+        "dist_mat_min": dist_mat_min,
+        "dist_mat_max": dist_mat_max,
         "min_demand": 1,
-        "max_demand": 1,
-        "vehicle_capacity": 1000,
-        "one_by_one": False,
-        "no_restart": False,
+        "max_demand": 5,
+        "vehicle_capacity": 10,
+        "one_by_one": False,  # if True, we plan for one agent at a time
+        "no_restart": True,  # if True, an agent can be used only once
         "imbalance_penalty": True,  # TODO: decay imbalance penalty
         "intermediate_reward": False,  # TODO: support intermediate reward
     }
 
     model_params = {
         "actor_params": {
-            "loc_encoder_params": {"hidden_size": 64},
-            "rnn_input_encoder_params": {"hidden_size": 64},
+            "node_encoder_params": {"hidden_size": 64},
+            "agent_encoder_params": {"hidden_size": 64},
+            "dist_encoder_params": {"hidden_size": 64, "input_size": 5},  # input_size is same as svd_q
             "ptrnet_params": {"hidden_size": 64, "num_layers": 1, "dropout": 0.05, "glimpse": False},
         },
         "critic_params": {
-            "loc_encoder_params": {"hidden_size": 64},
+            "dist_encoder_params": {"hidden_size": 64},
         },
         "actor_optimizer": {"lr": 5e-4},  # TODO: lr scheduler
         "critic_optimizer": {"lr": 5e-4},
@@ -295,13 +322,20 @@ if __name__ == "__main__":
         "batch_size": 256,
         "max_grad_norm": 2.0,
         ### Logging and Saving ###
-        "result_dir": "results",
-        "tb_log_dir": "logs",
+        "result_dir": "distmat_results",
+        "tb_log_dir": "distmat_logs",
         "use_tensorboard": True,  # tensorboard --logdir logs
         "save_figure_interval": 10,  # -1 for not saving
         "save_model_interval": 50,  # -1 for not saving
         "exp_name": "debug",
     }
+
+    # Initial seed for reproducibility
+    SEED = 0
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    np.random.seed(SEED)
+    random.seed(SEED)
 
     trainer = MDCVRPTrainer(env_params, model_params, trainer_params)
     trainer.train()

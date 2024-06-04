@@ -10,10 +10,9 @@ import logging
 import sys
 
 from torch.utils.data import DataLoader
-from tensordict import TensorDict
 import torch
 
-from distmat_envs import MDCVRPEnv
+from distmat_envs import MDCVRPFromFileEnv
 from distmat_models import Actor, Critic
 
 
@@ -28,13 +27,11 @@ class MDCVRPTester:
         self.env_params = env_params
         self.model_params = model_params
         self.tester_params = tester_params
-
-        ### update common params ###
-        self.env_params.update({"device": self.tester_params["device"]})
         self.device = torch.device(self.tester_params["device"])
 
         ### Env ###
-        self.env, self.test_dataset, self.env_params = self.setup_test()
+        self.env_params.update({"device": self.tester_params["device"]})
+        self.env = MDCVRPFromFileEnv(**self.env_params)
 
         ### Load Model ###
         with open(Path(self.model_params["model_ckpt_path"]).parent.parent / "params.json", "r") as f:
@@ -47,11 +44,11 @@ class MDCVRPTester:
         self.critic.load_state_dict(torch.load(self.model_params["model_ckpt_path"])["critic"])
 
         ### Paths & Loggers ###
-        prob_setting = f"N{self.env_params['n_custs']}_M{self.env_params['n_agents']}_D{self.env_params['dimension']}"
+        input_dir_name = Path(self.env_params["input_dir"]).name
         exp_name = f"{NOW}_{self.tester_params['exp_name']}"
 
         # Paths
-        self.result_dir = Path(self.tester_params["result_dir"]) / prob_setting / exp_name
+        self.result_dir = Path(self.tester_params["result_dir"]) / input_dir_name / exp_name
         self.figure_dir = self.result_dir / "figures"
 
         for _dir in [self.result_dir, self.figure_dir]:
@@ -76,21 +73,6 @@ class MDCVRPTester:
                 indent=4,
             )
 
-    def setup_test(self) -> tuple[MDCVRPEnv, TensorDict, dict[str, Any]]:
-        """
-        Create test environment and make test dataset
-        If testset_path is given, env is created based on it
-        """
-        if self.tester_params["testset_path"] is not None:
-            env, td, env_params = MDCVRPEnv.from_csv(
-                self.tester_params["testset_path"], self.tester_params["dist_mat_path"], **self.env_params
-            )
-        else:
-            env = MDCVRPEnv(**self.env_params)
-            td = env.generate_data(self.tester_params["test_n_samples"], seed=0)
-            env_params = self.env_params
-        return env, td, env_params
-
     def test(self) -> None:
         self.logger.info("Start Testing...")
 
@@ -98,7 +80,8 @@ class MDCVRPTester:
         self.actor.eval()
         self.critic.eval()
 
-        test_dataloader = DataLoader(self.test_dataset, batch_size=self.tester_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
+        test_dataset = self.env.reset(batch_size=1)
+        test_dataloader = DataLoader(test_dataset, batch_size=self.tester_params["batch_size"], collate_fn=lambda x: x)  # type: ignore
 
         with torch.no_grad():
             n_success = 0
@@ -144,7 +127,7 @@ class MDCVRPTester:
                     self.log(log_msg)
                     self.env.render(_td, _actions, save_path=self.figure_dir / f"instance{instance_idx}.png")
 
-        n_samples = len(self.test_dataset)
+        n_samples = len(test_dataset)
         self.log(f"Success Rate: {n_success}/{n_samples} ({100 * n_success / n_samples:.2f}%)")
         self.log(f"Testing Finished!")
 
@@ -154,24 +137,9 @@ class MDCVRPTester:
 
 
 if __name__ == "__main__":
-    # test with testset / None for randomly generated testset
-    testset_path = "data/N20_M3_D3/nodes.csv"
-    dist_mat_path = "data/N20_M3_D3/distmat_test/0.csv"
-    exp_name = "random" if testset_path is None else Path(testset_path).stem
-
     env_params = {
-        ### params for randomly generated testset, if testset_path is given, they are ignored ###
-        "n_custs": 20,
-        "n_agents": 2,
-        "dimension": 3,
-        "min_loc": 0,
-        "max_loc": 1,
-        "dist_perturb_min": 0.5,
-        "dist_perturb_max": 2.0,
-        "min_demand": 1,
-        "max_demand": 5,
-        "vehicle_capacity": 10,
-        ### Env logic params ###
+        "input_dir": "data/N20_M3_D3/",
+        "phase": "test",
         "one_by_one": False,
         "no_restart": True,
         "imbalance_penalty": True,  # TODO: decay imbalance penalty
@@ -179,20 +147,18 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "model_ckpt_path": "distmat_results/N20_M2_D3/240122-055334_debug/checkpoints/best.pth",
+        "model_ckpt_path": "distmat_results/N20_M3_D3/240220-044224_debug/checkpoints/best.pth",
     }
 
     tester_params = {
         ### CPU or GPU ###
         "device": "cuda",  # "cpu" or "cuda"
         ### Testing ###
-        "testset_path": testset_path,  # None for randomly generated testset
-        "dist_mat_path": dist_mat_path,  # None for randomly generated dist_mat
         "test_n_samples": 1,  # Only used when testset_path is None
         "batch_size": 256,
         ### Logging and Saving ###
         "result_dir": "distmat_test_results",
-        "exp_name": exp_name,
+        "exp_name": "debug",
     }
 
     tester = MDCVRPTester(env_params, model_params, tester_params)

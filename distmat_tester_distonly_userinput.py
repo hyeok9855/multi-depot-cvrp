@@ -10,11 +10,10 @@ import logging
 import sys
 
 from torch.utils.data import DataLoader
-from tensordict import TensorDict
 import torch
 
-from distmat_envs import MDCVRPFromFileEnv
-from distmat_models import Actor, Critic
+from distmat_envs import MDCVRPUserInputEnv
+from distmat_models import ActorDistOnly, CriticDistOnly
 
 
 NOW = datetime.strftime(datetime.now(), "%y%m%d-%H%M%S")
@@ -32,24 +31,23 @@ class MDCVRPTester:
 
         ### Env ###
         self.env_params.update({"device": self.tester_params["device"]})
-        self.env = MDCVRPFromFileEnv(**self.env_params)
+        self.env = MDCVRPUserInputEnv(**self.env_params)
 
         ### Load Model ###
         with open(Path(self.model_params["model_ckpt_path"]).parent.parent / "params.json", "r") as f:
             train_params = json.load(f)
 
-        self.actor = Actor(env=self.env, **train_params["model_params"]["actor_params"]).to(self.device)
-        self.critic = Critic(env=self.env, **train_params["model_params"]["critic_params"]).to(self.device)
+        self.actor = ActorDistOnly(env=self.env, **train_params["model_params"]["actor_params"]).to(self.device)
+        self.critic = CriticDistOnly(env=self.env, **train_params["model_params"]["critic_params"]).to(self.device)
 
         self.actor.load_state_dict(torch.load(self.model_params["model_ckpt_path"])["actor"])
         self.critic.load_state_dict(torch.load(self.model_params["model_ckpt_path"])["critic"])
 
         ### Paths & Loggers ###
-        input_dir_name = Path(self.env_params["input_dir"]).name
         exp_name = f"{NOW}_{self.tester_params['exp_name']}"
 
         # Paths
-        self.result_dir = Path(self.tester_params["result_dir"]) / input_dir_name / exp_name
+        self.result_dir = Path(self.tester_params["result_dir"]) / exp_name
         self.figure_dir = self.result_dir / "figures"
 
         for _dir in [self.result_dir, self.figure_dir]:
@@ -88,6 +86,8 @@ class MDCVRPTester:
             n_success = 0
             for batch_idx, batch in enumerate(test_dataloader):
                 self.env.reset(batch)  # to take steps with mini-batch
+                assert self.env.n_custs is not None, "n_custs is not set"
+
                 obs_td, actions, _, _ = self.actor(batch)
 
                 # to cpu for logging
@@ -120,7 +120,7 @@ class MDCVRPTester:
 
                     for _a in range(self.env.n_agents):
                         a_route = agent_route[_a]
-                        while a_route[-1] == "D":
+                        while len(a_route) > 1 and a_route[-1] == "D":
                             a_route.pop()
                         a_route.append("D")
                         log_msg += f"Agent {_a} [{agent_length[_a]:.3f}] ::: {' > '.join(agent_route[_a])}\n"
@@ -139,8 +139,7 @@ class MDCVRPTester:
 
 if __name__ == "__main__":
     env_params = {
-        "input_dir": "data/N20_M3_D3/",
-        "phase": "test",
+        "n_agents": 2,
         "one_by_one": False,
         "no_restart": True,
         "imbalance_penalty": True,  # TODO: decay imbalance penalty
@@ -148,7 +147,7 @@ if __name__ == "__main__":
     }
 
     model_params = {
-        "model_ckpt_path": "distmat_results/N20_M3_D3/240220-044224_debug/checkpoints/best.pth",
+        "model_ckpt_path": "distmat_results/N20_M2_D2/240605-012818_debug/checkpoints/best.pth",
     }
 
     tester_params = {
